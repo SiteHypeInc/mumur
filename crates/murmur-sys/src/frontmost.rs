@@ -89,10 +89,21 @@ mod imp {
         (out.status.success() && !s.is_empty()).then_some(s)
     }
 
+    /// `WM_CLASS(STRING) = "slack", "Slack"` -> "Slack" (older xdotool lacks getwindowclassname).
+    fn wm_class(win: &str) -> Option<String> {
+        let out = Command::new("xprop").args(["-id", win, "WM_CLASS"]).output().ok()?;
+        let line = String::from_utf8_lossy(&out.stdout).into_owned();
+        let parts: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
+        parts.last().filter(|s| !s.is_empty()).map(|s| s.to_string())
+    }
+
     pub fn target() -> Target {
-        let window_title = xdotool(&["getactivewindow", "getwindowname"]);
-        let class = xdotool(&["getactivewindow", "getwindowclassname"]);
-        let pid = xdotool(&["getactivewindow", "getwindowpid"]).and_then(|p| p.parse().ok());
+        // _NET_ACTIVE_WINDOW needs a window manager; fall back to input focus.
+        let win = xdotool(&["getactivewindow"]).or_else(|| xdotool(&["getwindowfocus", "-f"]));
+        let Some(win) = win else { return Target::default() };
+        let window_title = xdotool(&["getwindowname", &win]);
+        let class = xdotool(&["getwindowclassname", &win]).or_else(|| wm_class(&win));
+        let pid = xdotool(&["getwindowpid", &win]).and_then(|p| p.parse().ok());
         Target { context: AppContext { app_name: class.clone(), app_id: class, window_title, url_host: None }, pid }
     }
 

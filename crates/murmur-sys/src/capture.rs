@@ -19,6 +19,7 @@ use murmur_core::audio;
 
 const KEEP_WARM: Duration = Duration::from_secs(30);
 const PREROLL: Duration = Duration::from_millis(300);
+const MAX_BUFFERED_SAMPLES: usize = 48_000 * 2 * 60 * 15;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
@@ -237,7 +238,10 @@ fn push(s: &Shared, samples: &[f32]) {
     s.level.store(level.to_bits(), Ordering::Relaxed);
     if s.recording.load(Ordering::Relaxed) {
         if let Ok(mut buf) = s.buf.lock() {
-            buf.extend_from_slice(samples);
+            // Hard cap (~15 min of 48 kHz stereo) so a runaway device can't eat memory.
+            if buf.len() + samples.len() <= MAX_BUFFERED_SAMPLES {
+                buf.extend_from_slice(samples);
+            }
         }
     } else if let Ok(mut pre) = s.preroll.lock() {
         let cap = s.preroll_cap.load(Ordering::Relaxed) as usize;

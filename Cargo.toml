@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/murmur-core", "crates/murmur-sys"]
+members = ["crates/murmur-core", "crates/murmur-sys", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

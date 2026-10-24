@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Murmur</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
+    font: 500 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+  .wrap { height: 100%; display: flex; align-items: center; justify-content: center; }
+  .pill { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 16px; border-radius: 20px;
+    background: rgba(20, 20, 28, 0.86); color: #f4f4f8; box-shadow: 0 6px 24px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); transform: translateY(8px) scale(.96); opacity: 0;
+    transition: transform .16s ease, opacity .16s ease, width .2s ease; max-width: 220px; }
+  .pill.on { transform: none; opacity: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff453a; box-shadow: 0 0 0 0 rgba(255,69,58,.6); animation: pulse 1.4s infinite; flex: none; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,69,58,.5) } 70% { box-shadow: 0 0 0 8px rgba(255,69,58,0) } 100% { box-shadow: 0 0 0 0 rgba(255,69,58,0) } }
+  .bars { display: flex; align-items: center; gap: 3px; height: 22px; }
+  .bars i { display: block; width: 3px; height: 4px; border-radius: 2px; background: #c4b5fd; transition: height .07s linear; }
+  .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(196,181,253,.25); border-top-color: #c4b5fd; animation: rot .7s linear infinite; flex: none; }
+  @keyframes rot { to { transform: rotate(360deg) } }
+  .msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .muted { color: #a1a1aa; } .ok { color: #86efac; } .warn { color: #fcd34d; } .error { color: #fca5a5; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="pill" id="pill">
+  <span class="dot" id="dot"></span>
+  <span class="bars" id="bars"></span>
+  <span class="spin hidden" id="spin"></span>
+  <span class="msg hidden" id="msg"></span>
+</div></div>
+<script>
+  const { listen } = window.__TAURI__.event;
+  const $ = (id) => document.getElementById(id);
+  const N = 14;
+  const bars = $("bars");
+  for (let i = 0; i < N; i++) bars.appendChild(document.createElement("i"));
+  const history = new Array(N).fill(0);
+
+  function show(parts) {
+    for (const id of ["dot", "bars", "spin", "msg"]) $(id).classList.toggle("hidden", !parts.includes(id));
+    $("pill").classList.add("on");
+  }
+  function say(text, tone) {
+    const m = $("msg");
+    m.textContent = text;
+    m.className = "msg " + (tone || "");
+  }
+
+  listen("pill", ({ payload: p }) => {
+    switch (p.state) {
+      case "recording": history.fill(0); show(["dot", "bars"]); break;
+      case "processing": show(["spin", "msg"]); say("Writing…", "muted"); break;
+      case "done": show(["msg"]); say(`✓ ${p.words} word${p.words === 1 ? "" : "s"}`, "ok"); break;
+      case "message": show(["msg"]); say(p.text, p.tone); break;
+      case "hidden": $("pill").classList.remove("on"); break;
+    }
+  });
+
+  listen("level", ({ payload: level }) => {
+    history.push(level); history.shift();
+    bars.childNodes.forEach((b, i) => {
+      // Center-weighted so it reads as a voice, not a bar chart.
+      const w = 1 - Math.abs(i - (N - 1) / 2) / N;
+      b.style.height = Math.max(4, Math.min(22, 4 + history[i] * 26 * (0.6 + w))) + "px";
+    });
+  });
+
+  // Tiny synthesized cues: no audio files to ship, no latency.
+  let ctx;
+  function tone(freqs, dur = 0.07, gain = 0.06) {
+    ctx = ctx || new AudioContext();
+    const t0 = ctx.currentTime;
+    freqs.forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      const start = t0 + i * dur;
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(gain, start + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + dur + 0.08);
+      o.connect(g).connect(ctx.destination);
+      o.start(start); o.stop(start + dur + 0.1);
+    });
+  }
+  let soundsOn = true;
+  window.__TAURI__.core.invoke("overview").then((o) => { soundsOn = o.settings.audio.sounds; }).catch(() => {});
+  listen("settings-changed", ({ payload }) => { soundsOn = payload.audio.sounds; });
+  listen("sound", ({ payload: kind }) => {
+    if (!soundsOn) return;
+    if (kind === "start") tone([660, 880]);
+    else if (kind === "stop") tone([880, 660]);
+    else if (kind === "cancel") tone([440], 0.09, 0.05);
+    else if (kind === "error") tone([330, 262], 0.1, 0.05);
+  });
+</script>
+</body>
+</html>

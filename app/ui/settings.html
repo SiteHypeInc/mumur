@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Murmur</title>
+<link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+<aside>
+  <div class="brand"><span class="logo"><i></i><i></i><i></i><i></i><i></i></span> Murmur</div>
+  <nav id="nav">
+    <a data-s="setup">Get started</a>
+    <a data-s="general">General</a>
+    <a data-s="engines">Engines</a>
+    <a data-s="styles">Styles</a>
+    <a data-s="modes">App modes</a>
+    <a data-s="dictionary">Dictionary</a>
+    <a data-s="history">History</a>
+  </nav>
+  <div class="foot" id="foot"></div>
+</aside>
+
+<main>
+  <!-- Setup -->
+  <section id="setup">
+    <h1>Get started</h1>
+    <p class="lead">Hold your dictation key, speak, let go. Murmur types clean, punctuated text wherever your cursor is.</p>
+    <ol class="steps">
+      <li id="step-perms">
+        <h3>1 · Allow Murmur to listen and type</h3>
+        <p class="hint mac-only">macOS asks for three permissions: <b>Microphone</b> (on first dictation), <b>Accessibility</b> (to paste), and <b>Input Monitoring</b> (for the hotkey). Restart Murmur after granting Input Monitoring.</p>
+        <p class="hint not-mac">No extra permissions needed on this platform.</p>
+        <div class="row mac-only"><span id="perm-ax" class="badge"></span><span id="perm-im" class="badge"></span>
+          <button class="mac-only" id="grant">Open permission prompts</button></div>
+        <p class="error" id="hotkey-error"></p>
+      </li>
+      <li>
+        <h3>2 · Add your API keys</h3>
+        <p class="hint">Keys are stored in your system keychain and sent only to the provider. Groq transcribes in ~300 ms for fractions of a cent; Anthropic Haiku does the cleanup.</p>
+        <div class="keys">
+          <label><span>Groq <a href="https://console.groq.com/keys" target="_blank">get key</a></span><input type="password" data-key="groq" placeholder="gsk_…" autocomplete="off" /></label>
+          <label><span>Anthropic <a href="https://console.anthropic.com/settings/keys" target="_blank">get key</a></span><input type="password" data-key="anthropic" placeholder="sk-ant-…" autocomplete="off" /></label>
+          <label><span>OpenAI <span class="opt">optional</span></span><input type="password" data-key="openai" placeholder="sk-…" autocomplete="off" /></label>
+          <label><span>Custom server <span class="opt">optional</span></span><input type="password" data-key="custom" placeholder="Bearer token, if any" autocomplete="off" /></label>
+        </div>
+      </li>
+      <li>
+        <h3>3 · Test it</h3>
+        <div class="row"><button class="primary" id="test">Test connection</button><span id="test-result" class="hint"></span></div>
+        <p class="hint">Then click into any text box and hold <kbd id="hotkey-name">Fn</kbd>.</p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- General -->
+  <section id="general">
+    <h1>General</h1>
+    <div class="card">
+      <label class="field">Dictation key
+        <select data-bind="hotkey.binding" id="binding-select"></select>
+      </label>
+      <label class="field">Custom key combo <span class="opt">e.g. Ctrl+Shift+Space</span>
+        <input data-bind="hotkey.binding" id="binding-input" />
+      </label>
+      <label class="field">How the key works
+        <select data-bind="hotkey.mode">
+          <option value="hybrid">Hold to talk, tap to lock on</option>
+          <option value="push_to_talk">Hold to talk</option>
+          <option value="toggle">Tap to start, tap to stop</option>
+        </select>
+      </label>
+      <label class="field">Hold threshold <span class="opt">ms; shorter taps lock recording on</span>
+        <input type="number" min="150" max="1000" step="50" data-bind="hotkey.hold_threshold_ms" data-type="int" />
+      </label>
+    </div>
+    <div class="card">
+      <label class="field">Microphone<select data-bind="audio.device" id="devices"></select></label>
+      <label class="check"><input type="checkbox" data-bind="audio.sounds" /> Play start/stop sounds</label>
+      <label class="check"><input type="checkbox" id="autostart" /> Open Murmur at login</label>
+    </div>
+    <div class="card">
+      <label class="check"><input type="checkbox" data-bind="paste.restore_clipboard" /> Restore my clipboard after pasting</label>
+      <label class="check"><input type="checkbox" data-bind="paste.trailing_space" /> Add a space after each dictation</label>
+      <label class="field">Keep history <span class="opt">dictations; 0 = off</span>
+        <input type="number" min="0" max="100000" data-bind="history_limit" data-type="int" />
+      </label>
+    </div>
+  </section>
+
+  <!-- Engines -->
+  <section id="engines">
+    <h1>Engines</h1>
+    <div class="card">
+      <h3>Speech to text</h3>
+      <label class="field">Provider
+        <select data-bind="stt.provider">
+          <option value="groq">Groq (fastest)</option>
+          <option value="open_ai">OpenAI</option>
+          <option value="custom">Custom / local (OpenAI-compatible)</option>
+        </select>
+      </label>
+      <label class="field">Model <span class="opt">blank = default</span><input data-bind="stt.model" placeholder="whisper-large-v3-turbo" /></label>
+      <label class="field">Server URL <span class="opt">blank = default</span><input data-bind="stt.base_url" placeholder="http://127.0.0.1:8080/v1" /></label>
+      <label class="field">Language <span class="opt">ISO code, blank = auto</span><input data-bind="stt.language" placeholder="en" maxlength="5" /></label>
+    </div>
+    <div class="card">
+      <h3>Cleanup</h3>
+      <label class="check"><input type="checkbox" data-bind="polish.enabled" /> Clean up with AI (remove filler, fix punctuation, apply style)</label>
+      <label class="field">Provider
+        <select data-bind="polish.provider">
+          <option value="anthropic">Anthropic (Claude Haiku)</option>
+          <option value="groq">Groq</option>
+          <option value="open_ai">OpenAI</option>
+          <option value="custom">Custom / local (Ollama, LM Studio)</option>
+        </select>
+      </label>
+      <label class="field">Model <span class="opt">blank = default</span><input data-bind="polish.model" placeholder="claude-haiku-5-5" /></label>
+      <label class="field">Server URL <span class="opt">blank = default</span><input data-bind="polish.base_url" /></label>
+      <label class="field">Skip cleanup under <span class="opt">words</span><input type="number" min="0" max="50" data-bind="polish.min_words" data-type="int" /></label>
+      <p class="hint">Fully offline: run <code>whisper-server</code> and Ollama locally and choose Custom for both.</p>
+    </div>
+  </section>
+
+  <!-- Styles -->
+  <section id="styles">
+    <h1>Styles</h1>
+    <p class="lead">Murmur detects what kind of app you're in and writes in the style you pick for it.</p>
+    <div class="card" id="style-list"></div>
+  </section>
+
+  <!-- Modes -->
+  <section id="modes">
+    <h1>App modes</h1>
+    <p class="lead">Give specific apps or sites their own instructions, style, or auto-send. Sites win over apps.</p>
+    <div id="mode-list"></div>
+    <button id="add-mode">+ Add mode</button>
+  </section>
+
+  <!-- Dictionary -->
+  <section id="dictionary">
+    <h1>Dictionary</h1>
+    <div class="card">
+      <h3>Words Murmur should always spell your way</h3>
+      <p class="hint">Names, products, jargon. Near-misses snap to these (“Shinade” → “Sinéad”, “charge bee” → “ChargeBee”).</p>
+      <div class="chips" id="terms"></div>
+      <div class="row"><input id="new-term" placeholder="Add a word or phrase" /><button id="add-term">Add</button></div>
+      <label class="check"><input type="checkbox" data-bind="learn_from_edits" /> Learn new words when I correct a dictation <span class="opt mac-only">(reads the field you dictated into)</span></label>
+    </div>
+    <div class="card">
+      <h3>Replacements</h3>
+      <p class="hint">Say a phrase, get exact text. Great for emails, links and sign-offs.</p>
+      <table class="reps"><thead><tr><th>When I say</th><th>Type</th><th></th></tr></thead><tbody id="reps"></tbody></table>
+      <button id="add-rep">+ Add replacement</button>
+    </div>
+  </section>
+
+  <!-- History -->
+  <section id="history">
+    <h1>History</h1>
+    <div class="row"><input id="hist-q" type="search" placeholder="Search dictations" /><button id="hist-clear" class="danger">Clear all</button></div>
+    <p class="hint" id="hist-stats"></p>
+    <ul class="hist" id="hist"></ul>
+  </section>
+
+  <div class="toast" id="toast"></div>
+</main>
+<script src="settings.js"></script>
+</body>
+</html>
