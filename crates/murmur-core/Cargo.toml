@@ -1,0 +1,21 @@
+[package]
+name = "murmur-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Platform-free dictation pipeline: hotkey logic, context, prompts, dictionary, providers."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+log.workspace = true
+tokio.workspace = true
+async-trait = "0.1"
+toml = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { workspace = true, features = ["full", "test-util"] }
