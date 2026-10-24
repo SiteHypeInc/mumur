@@ -39,6 +39,7 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+#[cfg(feature = "history")]
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Self {
         Error::Storage(e.to_string())

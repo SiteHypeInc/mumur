@@ -6,6 +6,7 @@ pub mod config;
 pub mod context;
 pub mod dictionary;
 pub mod error;
+#[cfg(feature = "history")]
 pub mod history;
 pub mod hotkey;
 pub mod learn;

@@ -101,7 +101,7 @@ pub struct HotkeySettings {
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
-            binding: if cfg!(target_os = "macos") { "Fn".into() } else { "Ctrl+Space".into() },
+            binding: if cfg!(target_os = "macos") { "Fn".into() } else { "Ctrl+Win".into() },
             mode: ActivationMode::Hybrid,
             hold_threshold_ms: 350,
             cancel: "Escape".into(),
