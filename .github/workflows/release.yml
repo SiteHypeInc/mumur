@@ -1,0 +1,51 @@
+name: Release
+
+# Push a tag like v0.1.0 to publish installers on the GitHub Releases page.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            args: --target aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+          - os: macos-14
+            args: --target x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+          - os: windows-latest
+            args: ""
+            rust_target: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: Murmur ${{ github.ref_name }}
+          releaseBody: |
+            Free, open-source voice dictation. Hold a key, talk, let go.
+
+            **macOS:** download the `.dmg` (Apple Silicon: `aarch64`, Intel: `x64`), drag Murmur to Applications.
+            First launch: right-click → Open (builds are not notarized yet).
+            **Windows:** run the `.msi` or `-setup.exe`.
+          releaseDraft: true
+          args: ${{ matrix.args }}

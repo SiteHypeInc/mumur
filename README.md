@@ -1,105 +1,148 @@
 # Murmur
 
-Hold a key, talk, let go. Murmur types clean, punctuated text into whatever app has your cursor: Slack, Mail, Cursor, Notion, a terminal, anything.
+**Free, open-source voice dictation for Mac and Windows.** Hold a key, talk, let go. Clean, punctuated text appears wherever your cursor is: Slack, Mail, Cursor, Notion, Claude, a terminal, anything.
 
-It does what Wispr Flow and Superwhisper do, built from a teardown of how this category of app works (see [`docs/teardown.md`](docs/teardown.md)):
+Runs **100% on your computer for free** (whisper.cpp, no account, no internet), or plugs into the fastest cloud models with your own keys. Your call, and you can change it any time.
 
-- **Fast path everywhere.** The mic stays warm for 30 s after a dictation and keeps a 300 ms pre-roll, so the first word is never clipped. Silence is trimmed before upload. Short dictations (under 4 words) skip the LLM.
-- **Writes for the app you're in.** Murmur detects personal chat, work chat, email, code, docs, or other, and applies the style you picked: formal, casual, very casual, excited, or your own tone. Per-app and per-site **modes** add custom instructions or auto-press Enter.
-- **Your words, spelled right.** Dictionary terms are sent to the recognizer and to the cleanup model. They're also enforced in code, so "charge bee" becomes "ChargeBee" even if the LLM ignores the list. On macOS, Murmur **learns** a new word when you fix a misheard one in the field you dictated into.
-- **Never loses a dictation.** If cleanup fails, times out, or answers your words instead of cleaning them, you get the raw transcript. If paste fails, the text is on your clipboard.
-- **Doesn't trash your clipboard.** It saves the clipboard, pastes, and restores it, but only if nothing new was copied in the meantime.
-- **Bring your own keys, or go fully local.** Groq Whisper does transcription (~300 ms); Claude Haiku 5.5 or any OpenAI-compatible model does cleanup. You can point both at local servers (whisper.cpp `whisper-server`, Ollama, LM Studio) for fully offline use.
-- **Private by default.** Keys go in the OS keychain. History stays in local SQLite. Password fields are never read.
+> Built by [SiteHype](https://sitehypedesigns.com) and given away under the MIT license. If it saves you time, tell a friend.
 
-## Using it
+---
 
-| | macOS | Windows |
-|---|---|---|
-| Default key | **Fn / Globe** | **Ctrl + Win** |
-| Hold | push-to-talk | push-to-talk |
-| Quick tap | locks recording on; tap again to stop | same |
-| Esc while recording | cancel | cancel |
+## Why another dictation app?
 
-Change keys and modes in **Settings → General**. Right Option, Right ⌘, F13 or any combo works.
+Superwhisper, Wispr Flow and Glaido are good. But they're closed, mostly subscriptions, and when one of them fails to drop your text into the box, you go digging through its history. Murmur is what we wanted instead:
 
-## Build and run
+| | Murmur |
+|---|---|
+| Price | **Free.** Optional cloud costs pennies with your own keys |
+| Works offline | **Yes.** On-device whisper.cpp, Metal-accelerated on Apple Silicon |
+| Pick speed vs. accuracy | **Yes.** Tiny (75 MB, instant) → Large v3 Turbo (best, 99 languages) |
+| Bring your own models | Groq, OpenAI, Anthropic, **Ollama**, LM Studio, any OpenAI-compatible server |
+| Never lose a dictation | Saved before pasting. **Recent** menu in the tray, **paste-last** shortcut, full searchable history |
+| Writes for the app you're in | Casual in Slack, formal in email, verbatim identifiers in code |
+| Learns your words | Fix a misheard name once and Murmur spells it right from then on (macOS) |
+| Source code | All of it, right here |
 
-Requirements: Rust (stable), Node 18+ (for the Tauri CLI only; the UI has no build step).
+## Features
+
+- **Hold to talk, tap to lock.** Hold the key for push-to-talk. A quick tap keeps recording until you tap again. Esc cancels.
+- **Fn / Globe key on Mac,** or Right Option, Right ⌘, F13, or any combo you like.
+- **No clipped first words.** The mic stays warm briefly and keeps 300 ms of pre-roll.
+- **Styles per kind of app.** Personal chat, work chat, email, code & terminals, docs, everything else. Each gets formal, casual, very casual, excited, or your natural voice.
+- **App & site modes.** Give `linear.app` its own instructions ("write it as an issue"), or have Messages press Enter to send.
+- **Dictionary that actually sticks.** Words are sent to the recognizer and to the cleanup model, then enforced in code. "charge bee" becomes "ChargeBee" every time.
+- **Replacements.** Say "my calendar link" and it types `https://cal.com/you`.
+- **Never lose text.** Every dictation goes into local history before it's pasted.
+  - **Recent** (menu bar) lists the last 15. Click one to copy it.
+  - **Paste last dictation** (`Ctrl+Alt+V`, `F9` on Linux) types it again wherever you are.
+- **Your clipboard survives.** Murmur puts your clipboard back after pasting, unless you copied something new in the meantime.
+- **Private.** Keys live in the OS keychain. History is a local SQLite file. Password fields are never read.
+
+## Install
+
+### Download
+
+Grab the latest build from **[Releases](../../releases)**: the `.dmg` for macOS (Apple Silicon `aarch64` or Intel `x64`), or the `.msi` / `-setup.exe` for Windows. Every push to `main` also builds installers under **Actions → CI → Artifacts**.
+
+**macOS first launch:**
+
+1. Drag **Murmur** to Applications and open it. Builds aren't notarized yet, so the first time, **right-click → Open**. If macOS still refuses, run:
+   `xattr -dr com.apple.quarantine /Applications/Murmur.app`
+2. Murmur lives in the **menu bar** (the little waveform), not the Dock. To keep it on your Desktop too, ⌥⌘-drag it from Applications to make an alias.
+3. Grant **Input Monitoring** (for the Fn key), then quit and reopen Murmur.
+4. Grant **Accessibility** (to paste), and **Microphone** on your first dictation.
+5. Under **Get started**, pick **Free & private** and download a model (Large v3 Turbo is recommended on Apple Silicon), or pick **Cloud** and paste your keys.
+6. Click into any text box and hold **Fn**.
+
+### Build from source
+
+Needs Rust (stable), CMake, and Node 18+ (only for the Tauri CLI; the UI has no build step).
 
 ```bash
-cd app
-npx @tauri-apps/cli@2 dev      # run from source
+git clone https://github.com/SiteHypeInc/mumur && cd mumur/app
+npx @tauri-apps/cli@2 dev      # run it
 npx @tauri-apps/cli@2 build    # .app/.dmg on macOS, .msi/.exe on Windows
 ```
 
-**First launch on macOS:** the Get started screen walks you through:
+## Engines
 
-1. **Input Monitoring** (for the Fn key). Grant it, then quit and reopen Murmur.
-2. **Accessibility** (to paste and read the focused field).
-3. **Microphone** (prompted on first dictation).
-4. Paste your **Groq** and **Anthropic** keys and press **Test connection**.
+**Speech to text**
 
-Builds are ad-hoc signed (`signingIdentity: "-"`). For distribution, set your Developer ID in `app/src-tauri/tauri.conf.json` and notarize.
+| Engine | Cost | Notes |
+|---|---|---|
+| **On this computer** (default) | Free | whisper.cpp. Tiny 75 MB · Base 142 MB · Small 466 MB · **Large v3 Turbo 547 MB** (best) |
+| Groq | Free tier, then very cheap | `whisper-large-v3-turbo`, ~300 ms. Fastest cloud option |
+| OpenAI | Paid | `whisper-1` |
+| Custom | Free | Any OpenAI-compatible server (whisper.cpp `whisper-server`, speaches, LocalAI) |
 
-CI (`.github/workflows/ci.yml`) runs tests and the end-to-end check on Linux, then builds macOS (Apple Silicon) and Windows installers as downloadable artifacts.
+**Cleanup** (removes filler, fixes punctuation, applies your style)
 
-## Fully local mode
+| Engine | Cost | Notes |
+|---|---|---|
+| Built-in tidy-up | Free | Always on as a fallback: drops "um"/"uh" and stutters, fixes "i" → "I", capitalizes. Never touches code |
+| **Ollama** | Free | `ollama pull llama3.2`, pick Ollama in Settings → Engines |
+| Anthropic | Paid (cents) | Claude Haiku 5.5 by default: the best cleanup for the money |
+| Groq / OpenAI / Custom | Varies | Any chat model |
 
-```bash
-whisper-server -m ggml-large-v3-turbo.bin --port 8080   # from whisper.cpp
-ollama serve && ollama pull llama3.2
-```
+The cleanup prompt (`crates/murmur-core/src/prompt.rs`) is written so the model never answers or acts on what you dictate. "What's the capital of France" gets typed, not answered. If cleanup fails, times out, or misbehaves, you get the raw transcript.
 
-Settings → Engines: set both providers to **Custom**. The defaults point at `127.0.0.1:8080/v1` and `127.0.0.1:11434/v1`.
+## How it was built
 
-## Layout
+Murmur started as a reverse-engineering exercise. We pointed [REA](https://github.com/morluto/rea), an MCP server for reverse-engineering apps, at the open-source apps in this category to learn how they really work, then designed something better:
 
-```
-crates/murmur-core   platform-free logic (tested on any OS)
-  hotkey.rs          hold / tap / toggle state machine
-  audio.rs           downmix, resample to 16 kHz, silence gate + trim, WAV
-  context.rs         app/site → personal | work | email | code | document | other
-  modes.rs           styles per category + per-app/site overrides
-  prompt.rs          the cleanup prompt (the product lives here)
-  dictionary.rs      phrase replacements + fuzzy/phonetic term snapping
-  learn.rs           learn vocabulary from the user's own corrections
-  providers/         OpenAI-compatible STT, Anthropic + OpenAI-compatible LLM, key checks
-  pipeline.rs        audio → STT → dictionary → LLM → dictionary, with fallbacks
-  config.rs          settings (TOML), history.rs (SQLite)
-crates/murmur-sys    OS integration
-  capture.rs         cpal mic thread, warm stream, pre-roll, level meter
-  keys.rs/hotkey.rs  binding parser + matcher; CGEventTap on macOS (Fn, right-side
-                     modifiers, swallows combo keys), rdev elsewhere
-  paste.rs           clipboard swap + ⌘V/Ctrl+V + guarded restore, auto-send keys
-  frontmost.rs       frontmost app, window title, browser URL (macOS), focused text (macOS AX)
-  macos.rs           Accessibility / Quartz FFI
-app/src-tauri        Tauri v2 shell: tray, non-activating overlay pill, settings, keychain
-app/ui               overlay.html, settings.html (vanilla JS, no bundler)
-e2e/                 end-to-end and UI checks
-docs/                teardown of Wispr Flow-class apps + reverse-engineering playbook
-```
+- **[OpenWhispr](https://github.com/OpenWhispr/openwhispr)** (an Electron clone of Wispr Flow). REA rebuilt its app graph: 2,776 JS files and **575 IPC channels**. That made the whole feature surface visible: hotkey → mic → streaming STT → LLM cleanup → paste → learn-from-edits.
+- **[VoiceInk](https://github.com/Beingpax/VoiceInk)** (Swift, Superwhisper-style "modes") and **[Handy](https://github.com/cjpais/Handy)** (Rust/Tauri), traced file by file.
 
-## Testing
+Some of what that taught us, and what Murmur does about it:
+
+- **Whisper hallucinates on silence** ("Thank you.", "Thanks for watching!"). Murmur gates silence before upload and filters the known phantom phrases.
+- **The best apps learn from your corrections.** We built a word-level diff learner with phonetic matching, plus guards so "cloud" never turns into "Claude".
+- **Clipboard-swap pasting is universal but fragile.** Murmur restores your clipboard only if it still holds our text, re-activates the target app first, and saves history before pasting.
+- **The Fn/Globe key needs special handling on macOS.** Murmur uses a native event tap that tells left from right modifiers.
+
+The full teardown, with prompts, timings and file references, is in **[docs/teardown.md](docs/teardown.md)**. The playbook for running the same analysis on closed apps (Wispr Flow, Superwhisper) is in [docs/reverse-engineering-playbook.md](docs/reverse-engineering-playbook.md).
+
+## How it's tested
 
 ```bash
-cargo test --workspace                 # 67 unit tests (mock HTTP servers, no keys needed)
-e2e/run_e2e.sh                         # Linux: real hotkey, fake mic, mock STT/LLM, real paste
-node e2e/ui_check.mjs app/ui <defaults.json> <outdir>   # drives Settings in Chromium
-scripts/check-targets.sh               # type-check macOS + Windows from Linux
+cargo test --workspace     # ~80 unit tests, mock HTTP servers, no keys needed
+e2e/run_e2e.sh             # Linux: the real app, end to end
+scripts/check-targets.sh   # type-check macOS + Windows from Linux
+MURMUR_TEST_MODEL=ggml-tiny.en.bin cargo test -p murmur-local --test real_model
 ```
 
-The end-to-end test starts the real app on a virtual X display. A PulseAudio null sink acts as the microphone, and a Tk text box named "Slack" is the target. It presses the hotkey with `xdotool` and plays audio while held. Then it asserts four things:
+- **End to end:** starts the real app on a virtual display with a PulseAudio "microphone". It presses the hotkey, plays speech, and checks that the cleaned sentence lands in a text box named "Slack". It also checks that the app was classified as work chat, the clipboard was restored, and the paste-last shortcut types it again.
+- **Real model:** CI downloads `ggml-tiny.en`, transcribes JFK's "ask not what your country can do for you", and runs the full offline pipeline.
+- **UI:** the settings window is driven in Chromium. What it saves must deserialize in Rust.
 
-- the text box contains the cleaned sentence;
-- the clipboard was restored;
-- the app was classified as work chat;
-- vocabulary went to transcription.
+CI runs all of this on every push, then builds the macOS and Windows installers.
 
-## Status and known gaps
+## Project layout
 
-- macOS and Windows code type-checks in CI but **hasn't been run on real hardware yet**. Treat the first Mac run as a beta.
-- Windows: the focused field isn't read yet (UI Automation), so no learn-from-edits or field context there.
-- Linux: hotkeys need X11 (rdev). Wayland global shortcuts are not wired up.
-- Clipboard restore covers text and images, not rich text or files.
-- No bundled local model yet (use Custom → whisper.cpp). Streaming transcription during speech is the next latency win.
+```
+crates/murmur-core    platform-free logic: hotkey state machine, audio, app classifier,
+                      styles/modes, cleanup prompt, dictionary, learner, providers, pipeline
+crates/murmur-local   on-device whisper.cpp engine + model downloads
+crates/murmur-sys     OS integration: mic (cpal), hotkeys (CGEventTap / Windows hook / X11),
+                      paste + clipboard restore, frontmost app, Accessibility reads
+app/src-tauri         Tauri v2 shell: tray + Recent menu, focus-safe overlay pill, settings, keychain
+app/ui                overlay and settings (plain HTML/CSS/JS)
+e2e/                  end-to-end and UI checks
+docs/                 teardown + reverse-engineering playbook
+```
+
+## Roadmap
+
+- Streaming transcription while you speak (lower latency on long dictations)
+- Parakeet (NVIDIA) on-device models
+- Windows: read the focused field (UI Automation) for learn-from-edits and context
+- Linux: Wayland global shortcuts
+- Notarized macOS builds
+
+## Contributing
+
+Issues and PRs welcome. Run `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` before sending.
+
+## License
+
+[MIT](LICENSE) © SiteHype Inc. and contributors.
