@@ -97,7 +97,7 @@ pub struct LocalWhisper {
 /// Our pipeline hands transcribers 16-bit mono WAV; turn it back into samples.
 fn wav_to_f32(wav: &[u8]) -> Vec<f32> {
     let data = wav.windows(4).position(|w| w == b"data").map(|i| i + 8).unwrap_or(44).min(wav.len());
-    wav[data..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect()
+    wav[data..].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0).collect()
 }
 
 fn threads() -> i32 {

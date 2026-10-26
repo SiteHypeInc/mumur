@@ -50,7 +50,7 @@ async fn full_pipeline_offline_with_vocabulary_and_tidy() {
     // Decode the fixture into 16 kHz samples, as the recorder would deliver them.
     let wav = jfk_wav();
     let data = wav.windows(4).position(|w| w == b"data").unwrap() + 8;
-    let samples: Vec<f32> = wav[data..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+    let samples: Vec<f32> = wav[data..].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0).collect();
 
     let mut settings = Settings::default();
     settings.dictionary.terms.push("Fellow Americans".into());
