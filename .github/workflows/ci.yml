@@ -26,15 +26,15 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev \
             xvfb xdotool xclip x11-utils python3-tk pulseaudio pulseaudio-utils libasound2-plugins \
             cmake clang libclang-dev
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: scripts/ci-run.sh cargo clippy --workspace --all-targets -- -D warnings
+      - run: scripts/ci-run.sh cargo test --workspace
       - name: On-device transcription with a real whisper model
         run: |
           curl -sSfL -o /tmp/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
-          MURMUR_TEST_MODEL=/tmp/ggml-tiny.en.bin cargo test -p murmur-local --test real_model -- --nocapture
-      - run: cargo build -p murmur
+          MURMUR_TEST_MODEL=/tmp/ggml-tiny.en.bin scripts/ci-run.sh cargo test -p murmur-local --test real_model -- --nocapture
+      - run: scripts/ci-run.sh cargo build -p murmur
       - name: End-to-end (virtual display, fake mic, mock providers)
-        run: PYTHON_TK=python3 e2e/run_e2e.sh
+        run: PYTHON_TK=python3 scripts/ci-run.sh e2e/run_e2e.sh
 
   bundle:
     name: Bundle ${{ matrix.name }}
@@ -57,10 +57,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cargo test --workspace
+      - run: scripts/ci-run.sh cargo test --workspace
+        shell: bash
       - name: Build installer
-        working-directory: app
-        run: npx -y @tauri-apps/cli@2 build ${{ matrix.args }}
+        shell: bash
+        run: cd app && ../scripts/ci-run.sh npx -y @tauri-apps/cli@2 build ${{ matrix.args }}
       - uses: actions/upload-artifact@v4
         with:
           name: murmur-${{ matrix.os }}
