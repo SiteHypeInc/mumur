@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use murmur_core::config::Settings;
+use murmur_core::config::{Settings, SttProvider};
 use murmur_core::history::{History, NewEntry};
 use murmur_core::hotkey::{HotkeyAction, HotkeyMachine};
 use murmur_core::learn;
@@ -19,6 +19,7 @@ use murmur_sys::paste::{self, InsertOptions};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::local::LocalEngine;
 use crate::overlay::{self, PillState};
 use crate::secrets;
 
@@ -48,6 +49,9 @@ pub struct Controller {
     /// Increments per recording, so a stale level/timeout thread knows to stop.
     generation: AtomicU64,
     pub hotkey_error: Mutex<Option<String>>,
+    pub local: crate::local::LocalEngine,
+    /// Most recent dictation, kept even when history is off.
+    last_text: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -62,7 +66,7 @@ fn now_ms(start: Instant) -> u64 {
 }
 
 impl Controller {
-    pub fn new(app: AppHandle, settings_path: PathBuf, history_path: PathBuf) -> Arc<Self> {
+    pub fn new(app: AppHandle, settings_path: PathBuf, history_path: PathBuf, models_dir: PathBuf) -> Arc<Self> {
         let settings = Settings::load(&settings_path).unwrap_or_else(|e| {
             log::error!("settings unreadable, using defaults: {e}");
             Settings::default()
@@ -81,7 +85,17 @@ impl Controller {
             paused: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             hotkey_error: Mutex::new(None),
+            local: crate::local::LocalEngine::new(models_dir),
+            last_text: Mutex::new(None),
         })
+    }
+
+    /// Load the on-device model now if that's the engine in use.
+    pub fn prewarm(&self) {
+        let s = self.settings.read().unwrap();
+        if s.stt.provider == SttProvider::Local {
+            self.local.prewarm(LocalEngine::model_id(&s.stt.model));
+        }
     }
 
     /// Install the global hotkey and start the event loop thread.
@@ -94,7 +108,14 @@ impl Controller {
         match Hotkeys::start(&binding, &cancel, move |e| {
             let _ = tx.send(e);
         }) {
-            Ok(h) => *self.hotkeys.lock().unwrap() = Some(h),
+            Ok(h) => {
+                let pl = self.settings.read().unwrap().hotkey.paste_last.clone();
+                if let Err(e) = h.set_paste_last(&pl) {
+                    log::warn!("paste-last shortcut ignored: {e}");
+                }
+                *self.hotkeys.lock().unwrap() = Some(h);
+                log::info!("ready: hold {binding} to dictate");
+            }
             Err(e) => {
                 log::error!("hotkey unavailable: {e}");
                 *self.hotkey_error.lock().unwrap() = Some(e.to_string());
@@ -107,8 +128,12 @@ impl Controller {
     pub fn apply_settings(&self, new: Settings) -> Result<(), String> {
         murmur_sys::keys::Binding::parse(&new.hotkey.binding).map_err(|e| e.to_string())?;
         new.save(&self.settings_path).map_err(|e| e.to_string())?;
+        if !new.hotkey.paste_last.trim().is_empty() {
+            murmur_sys::keys::Binding::parse(&new.hotkey.paste_last).map_err(|e| format!("Paste-last shortcut: {e}"))?;
+        }
         if let Some(h) = self.hotkeys.lock().unwrap().as_ref() {
             h.set_binding(&new.hotkey.binding).map_err(|e| e.to_string())?;
+            h.set_paste_last(&new.hotkey.paste_last).map_err(|e| e.to_string())?;
         }
         *self.machine.lock().unwrap() = HotkeyMachine::new(new.hotkey.mode, new.hotkey.hold_threshold_ms);
         if let Some(h) = self.history.lock().unwrap().as_ref() {
@@ -116,6 +141,7 @@ impl Controller {
         }
         let _ = self.app.emit("settings-changed", &new);
         *self.settings.write().unwrap() = new;
+        self.prewarm();
         Ok(())
     }
 
@@ -130,6 +156,11 @@ impl Controller {
                 match ev {
                     HotkeyEvent::Pressed => m.on_press(now_ms(epoch)),
                     HotkeyEvent::Released => m.on_release(now_ms(epoch)),
+                    HotkeyEvent::PasteLast => {
+                        drop(m);
+                        self.paste_last();
+                        continue;
+                    }
                     HotkeyEvent::Interrupted | HotkeyEvent::Cancel => {
                         if m.is_recording() {
                             m.reset();
@@ -252,9 +283,16 @@ impl Controller {
         let settings = self.settings.read().unwrap().clone();
         let stt_key = secrets::get(secrets::stt_key_name(settings.stt.provider));
         let polish_key = secrets::get(secrets::polish_key_name(settings.polish.provider));
-        let transcriber = match settings.build_transcriber(stt_key) {
-            Ok(t) => t,
-            Err(e) => return self.fail(&e.user_message()),
+        let transcriber = if settings.stt.provider == SttProvider::Local {
+            match self.local.transcriber(LocalEngine::model_id(&settings.stt.model)) {
+                Ok(t) => t,
+                Err(msg) => return self.fail(&msg),
+            }
+        } else {
+            match settings.build_transcriber(stt_key) {
+                Ok(t) => t,
+                Err(e) => return self.fail(&e.user_message()),
+            }
         };
         let engine = Engine { transcriber, polisher: settings.build_polisher(polish_key) };
         log::info!("captured {} samples, {:.1} dBFS", samples.len(), murmur_core::audio::rms_dbfs(&samples));
@@ -277,6 +315,9 @@ impl Controller {
             overlay::set(&self.app, PillState::Message { text, tone: "muted" });
             return self.hide_later(1400);
         }
+
+        // Save first: if the paste fails or the app swallows it, it's one click away.
+        self.record(&outcome, &snap.target, &settings);
 
         let text = if settings.paste.trailing_space {
             murmur_core::text::with_trailing_space(&outcome.text)
@@ -308,13 +349,13 @@ impl Controller {
             }
         }
 
-        self.record(&outcome, &snap.target, &settings);
         if settings.learn_from_edits && cfg!(target_os = "macos") {
             self.watch_for_edits(outcome.text.clone(), snap.target.pid);
         }
     }
 
     fn record(&self, o: &Outcome, target: &Target, settings: &Settings) {
+        *self.last_text.lock().unwrap() = Some(o.text.clone());
         let category = format!("{:?}", o.resolved.category).to_lowercase();
         if settings.history_limit > 0 {
             if let Some(h) = self.history.lock().unwrap().as_ref() {
@@ -332,6 +373,7 @@ impl Controller {
                 );
             }
         }
+        crate::tray::refresh(&self.app);
         let _ = self.app.emit(
             "dictation",
             DictationEvent { text: o.text.clone(), app: target.context.app_name.clone(), note: o.note.clone() },
@@ -372,6 +414,53 @@ impl Controller {
         overlay::set(&self.app, PillState::Message { text: message.to_owned(), tone: "error" });
         overlay::sound(&self.app, "error");
         self.hide_later(3000);
+    }
+
+    /// Latest dictations as (id, text), newest first. Falls back to the
+    /// in-memory last dictation when history is off.
+    pub fn recent(&self, n: usize) -> Vec<(i64, String)> {
+        let from_db = self
+            .history
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|h| h.list(None, n).ok())
+            .map(|v| v.into_iter().map(|e| (e.id, e.text)).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if !from_db.is_empty() {
+            return from_db;
+        }
+        self.last_text.lock().unwrap().clone().map(|t| vec![(0, t)]).unwrap_or_default()
+    }
+
+    /// Paste the last dictation again into whatever has focus now.
+    pub fn paste_last(self: &Arc<Self>) {
+        let Some((_, text)) = self.recent(1).into_iter().next() else {
+            overlay::set(&self.app, PillState::Message { text: "Nothing to paste yet".into(), tone: "muted" });
+            return self.hide_later(1200);
+        };
+        let me = self.clone();
+        std::thread::spawn(move || {
+            if let Some(h) = me.hotkeys.lock().unwrap().as_ref() {
+                h.wait_for_modifier_release(Duration::from_millis(1500));
+            }
+            let s = me.settings.read().unwrap().clone();
+            let text = if s.paste.trailing_space { murmur_core::text::with_trailing_space(&text) } else { text };
+            let opts = InsertOptions {
+                restore_clipboard: s.paste.restore_clipboard,
+                restore_delay: Duration::from_millis(s.paste.restore_delay_ms),
+                send_key: None,
+            };
+            if let Err(e) = paste::insert_text(&text, &opts) {
+                let _ = paste::copy_to_clipboard(&text);
+                overlay::set(&me.app, PillState::Message { text: format!("Copied instead ({e})"), tone: "warn" });
+                me.hide_later(2500);
+            }
+        });
+    }
+
+    pub fn hide_overlay_later(self: &Arc<Self>, ms: u64) {
+        self.hide_later(ms);
     }
 
     /// Hide the pill after `ms`, unless a new recording has started since.

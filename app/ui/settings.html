@@ -36,13 +36,22 @@
         <p class="error" id="hotkey-error"></p>
       </li>
       <li>
-        <h3>2 · Add your API keys</h3>
-        <p class="hint">Keys are stored in your system keychain and sent only to the provider. Groq transcribes in ~300 ms for fractions of a cent; Anthropic Haiku does the cleanup.</p>
-        <div class="keys">
-          <label><span>Groq <a href="https://console.groq.com/keys" target="_blank">get key</a></span><input type="password" data-key="groq" placeholder="gsk_…" autocomplete="off" /></label>
-          <label><span>Anthropic <a href="https://console.anthropic.com/settings/keys" target="_blank">get key</a></span><input type="password" data-key="anthropic" placeholder="sk-ant-…" autocomplete="off" /></label>
-          <label><span>OpenAI <span class="opt">optional</span></span><input type="password" data-key="openai" placeholder="sk-…" autocomplete="off" /></label>
-          <label><span>Custom server <span class="opt">optional</span></span><input type="password" data-key="custom" placeholder="Bearer token, if any" autocomplete="off" /></label>
+        <h3>2 · Pick your engine</h3>
+        <div class="engine-choice">
+          <label class="choice"><input type="radio" name="engine" value="local" /> <b>Free &amp; private</b>
+            <span class="hint">Runs on this computer. No account, no internet, no cost. One-time model download.</span></label>
+          <label class="choice"><input type="radio" name="engine" value="cloud" /> <b>Cloud</b>
+            <span class="hint">Groq + Claude: fastest and smartest cleanup, about a cent a day of heavy use. Bring your own keys.</span></label>
+        </div>
+        <div class="engine-local"><div class="models" data-models></div></div>
+        <div class="engine-cloud">
+          <p class="hint">Keys are stored in your system keychain and sent only to the provider. Groq has a free tier for transcription.</p>
+          <div class="keys">
+            <label><span>Groq <a href="https://console.groq.com/keys" target="_blank">get key</a></span><input type="password" data-key="groq" placeholder="gsk_…" autocomplete="off" /></label>
+            <label><span>Anthropic <a href="https://console.anthropic.com/settings/keys" target="_blank">get key</a></span><input type="password" data-key="anthropic" placeholder="sk-ant-…" autocomplete="off" /></label>
+            <label><span>OpenAI <span class="opt">optional</span></span><input type="password" data-key="openai" placeholder="sk-…" autocomplete="off" /></label>
+            <label><span>Custom server <span class="opt">optional</span></span><input type="password" data-key="custom" placeholder="Bearer token, if any" autocomplete="off" /></label>
+          </div>
         </div>
       </li>
       <li>
@@ -70,6 +79,9 @@
           <option value="toggle">Tap to start, tap to stop</option>
         </select>
       </label>
+      <label class="field">Paste last dictation again <span class="opt">for when an app swallows the text; blank = off</span>
+        <input data-bind="hotkey.paste_last" placeholder="Ctrl+Alt+V" />
+      </label>
       <label class="field">Hold threshold <span class="opt">ms; shorter taps lock recording on</span>
         <input type="number" min="150" max="1000" step="50" data-bind="hotkey.hold_threshold_ms" data-type="int" />
       </label>
@@ -95,13 +107,17 @@
       <h3>Speech to text</h3>
       <label class="field">Provider
         <select data-bind="stt.provider">
-          <option value="groq">Groq (fastest)</option>
+          <option value="local">On this computer (free, private)</option>
+          <option value="groq">Groq (fastest cloud)</option>
           <option value="open_ai">OpenAI</option>
-          <option value="custom">Custom / local (OpenAI-compatible)</option>
+          <option value="custom">Custom server (OpenAI-compatible)</option>
         </select>
       </label>
-      <label class="field">Model <span class="opt">blank = default</span><input data-bind="stt.model" placeholder="whisper-large-v3-turbo" /></label>
-      <label class="field">Server URL <span class="opt">blank = default</span><input data-bind="stt.base_url" placeholder="http://127.0.0.1:8080/v1" /></label>
+      <div class="when-local"><div class="models" data-models></div></div>
+      <div class="when-cloud">
+        <label class="field">Model <span class="opt">blank = default</span><input data-bind="stt.model" placeholder="whisper-large-v3-turbo" /></label>
+        <label class="field">Server URL <span class="opt">blank = default</span><input data-bind="stt.base_url" placeholder="http://127.0.0.1:8080/v1" /></label>
+      </div>
       <label class="field">Language <span class="opt">ISO code, blank = auto</span><input data-bind="stt.language" placeholder="en" maxlength="5" /></label>
     </div>
     <div class="card">
@@ -112,13 +128,14 @@
           <option value="anthropic">Anthropic (Claude Haiku)</option>
           <option value="groq">Groq</option>
           <option value="open_ai">OpenAI</option>
-          <option value="custom">Custom / local (Ollama, LM Studio)</option>
+          <option value="ollama">Ollama (free, on this computer)</option>
+          <option value="custom">Custom server (LM Studio, llama.cpp)</option>
         </select>
       </label>
       <label class="field">Model <span class="opt">blank = default</span><input data-bind="polish.model" placeholder="claude-haiku-5-5" /></label>
       <label class="field">Server URL <span class="opt">blank = default</span><input data-bind="polish.base_url" /></label>
       <label class="field">Skip cleanup under <span class="opt">words</span><input type="number" min="0" max="50" data-bind="polish.min_words" data-type="int" /></label>
-      <p class="hint">Fully offline: run <code>whisper-server</code> and Ollama locally and choose Custom for both.</p>
+      <p class="hint">No key? Murmur still removes "um"s and stutters and fixes capitalization on its own. For free AI cleanup, install <a href="https://ollama.com" target="_blank">Ollama</a>, run <code>ollama pull llama3.2</code>, and pick Ollama above.</p>
     </div>
   </section>
 

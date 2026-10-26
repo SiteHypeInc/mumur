@@ -63,13 +63,21 @@ pub async fn test_connection(ctl: Ctl<'_>) -> Result<String, String> {
     let mut report = Vec::new();
 
     let sp = s.stt.provider;
-    let stt_key = secrets::get(secrets::stt_key_name(sp));
-    if sp != SttProvider::Custom && stt_key.is_none() {
-        return Err(format!("Add your {} API key for transcription", sp.label()));
+    if sp == SttProvider::Local {
+        let id = crate::local::LocalEngine::model_id(&s.stt.model);
+        if !ctl.local.is_ready(id) {
+            return Err("Download a speech model first (Settings → Engines)".into());
+        }
+        report.push("Transcription: on-device ✓".to_owned());
+    } else {
+        let stt_key = secrets::get(secrets::stt_key_name(sp));
+        if sp != SttProvider::Custom && stt_key.is_none() {
+            return Err(format!("Add your {} API key for transcription", sp.label()));
+        }
+        let base = if s.stt.base_url.trim().is_empty() { sp.default_base_url().to_owned() } else { s.stt.base_url.clone() };
+        check::openai_compatible(sp.label(), &base, stt_key.as_deref()).await.map_err(|e| e.user_message())?;
+        report.push(format!("Transcription: {} ✓", sp.label()));
     }
-    let base = if s.stt.base_url.trim().is_empty() { sp.default_base_url().to_owned() } else { s.stt.base_url.clone() };
-    check::openai_compatible(sp.label(), &base, stt_key.as_deref()).await.map_err(|e| e.user_message())?;
-    report.push(format!("Transcription: {} ✓", sp.label()));
 
     if s.polish.enabled {
         let pp = s.polish.provider;
@@ -77,11 +85,17 @@ pub async fn test_connection(ctl: Ctl<'_>) -> Result<String, String> {
         let base = if s.polish.base_url.trim().is_empty() { pp.default_base_url().to_owned() } else { s.polish.base_url.clone() };
         match (pp, key) {
             (PolishProvider::Anthropic, Some(k)) => check::anthropic(&base, &k).await,
-            (PolishProvider::Custom, k) => check::openai_compatible(pp.label(), &base, k.as_deref()).await,
+            (PolishProvider::Custom | PolishProvider::Ollama, k) => check::openai_compatible(pp.label(), &base, k.as_deref()).await,
             (_, Some(k)) => check::openai_compatible(pp.label(), &base, Some(&k)).await,
-            (_, None) => return Err(format!("Add your {} API key for cleanup, or turn cleanup off", pp.label())),
+            (_, None) => {
+                report.push(format!("Cleanup: built-in tidy-up (add a {} key or use Ollama for AI cleanup)", pp.label()));
+                return Ok(report.join(" · "));
+            }
         }
-        .map_err(|e| e.user_message())?;
+        .map_err(|e| match pp {
+            PolishProvider::Ollama => "Ollama isn't running. Install it from ollama.com, then run: ollama pull llama3.2".to_owned(),
+            _ => e.user_message(),
+        })?;
         report.push(format!("Cleanup: {} ✓", pp.label()));
     }
     Ok(report.join(" · "))
@@ -123,6 +137,23 @@ pub fn request_permissions() -> (bool, bool) {
 #[tauri::command]
 pub fn set_paused(ctl: Ctl, paused: bool) {
     ctl.paused.store(paused, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn models(ctl: Ctl) -> Vec<crate::local::ModelStatus> {
+    ctl.local.list()
+}
+
+#[tauri::command]
+pub async fn download_model(app: tauri::AppHandle, ctl: Ctl<'_>, id: String) -> Result<(), String> {
+    ctl.local.download(&app, &id).await?;
+    ctl.prewarm();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_model(ctl: Ctl, id: String) -> Result<(), String> {
+    ctl.local.delete(&id)
 }
 
 #[tauri::command]

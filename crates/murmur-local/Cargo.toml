@@ -1,0 +1,22 @@
+[package]
+name = "murmur-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "On-device speech-to-text for Murmur (whisper.cpp), plus model download/management."
+
+[dependencies]
+murmur-core = { path = "../murmur-core", default-features = false }
+whisper-rs = "0.16"
+async-trait = "0.1"
+reqwest.workspace = true
+tokio.workspace = true
+serde.workspace = true
+log.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+wiremock = "0.6"

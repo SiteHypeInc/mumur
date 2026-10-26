@@ -76,6 +76,7 @@ function bindAll() {
       if (el.dataset.type === "int") val = parseInt(val || "0", 10);
       set(path, val);
       if (path === "hotkey.binding") syncBinding();
+      if (path === "stt.provider") syncEngineViews();
       save(el.tagName === "SELECT" || el.type === "checkbox");
     };
   });
@@ -139,6 +140,95 @@ $("#test").onclick = async () => {
     out.className = "error";
   }
 };
+
+// ---- on-device models ----
+let models = [];
+const progress = {}; // id -> {done,total}
+const DEFAULT_MODEL = "large-v3-turbo-q5";
+const dots = (n, max = 5) => "<b>" + "●".repeat(n) + "</b>" + "○".repeat(max - n);
+
+async function loadModels() {
+  models = (await invoke("models")) || [];
+  renderModels();
+}
+
+function renderModels() {
+  const current = s.stt.model || DEFAULT_MODEL;
+  const html = models.length
+    ? models.map((m) => {
+        const p = progress[m.id];
+        const pct = p && p.total ? Math.round((p.done / p.total) * 100) : 0;
+        const right = m.downloaded
+          ? `<span class="state-ok">✓ Ready</span> <button class="danger" data-delete="${m.id}" title="Delete download">×</button>`
+          : p
+            ? `<div class="bar"><i style="width:${pct}%"></i></div> <span class="meta">${pct}%</span>`
+            : `<button data-download="${m.id}">Download · ${m.size_mb} MB</button>`;
+        return `<div class="model ${m.id === current ? "active" : ""}">
+          <input type="radio" name="model" data-use="${m.id}" ${m.id === current ? "checked" : ""} ${m.downloaded ? "" : "disabled"} />
+          <div><div class="name">${esc(m.label)} ${m.id === DEFAULT_MODEL ? '<span class="opt">recommended</span>' : ""}</div>
+            <div class="meta">${esc(m.note)}</div>
+            <div class="meters">speed ${dots(m.speed)} &nbsp; accuracy ${dots(m.accuracy)}</div></div>
+          <div class="row">${right}</div></div>`;
+      }).join("")
+    : `<p class="hint">This build has no on-device engine.</p>`;
+  $$("[data-models]").forEach((el) => {
+    el.innerHTML = html;
+    $$("[data-download]", el).forEach((b) => (b.onclick = () => download(b.dataset.download)));
+    $$("[data-delete]", el).forEach((b) => (b.onclick = async () => {
+      if (!confirm("Delete this model from disk?")) return;
+      await invoke("delete_model", { id: b.dataset.delete });
+      loadModels();
+    }));
+    $$("[data-use]", el).forEach((r) => (r.onchange = () => useModel(r.dataset.use)));
+  });
+}
+
+function useModel(id) {
+  s.stt.model = id;
+  s.stt.provider = "local";
+  bindAll();
+  syncEngineViews();
+  renderModels();
+  save(true);
+}
+
+async function download(id) {
+  progress[id] = { done: 0, total: null };
+  renderModels();
+  try {
+    await invoke("download_model", { id });
+    delete progress[id];
+    await loadModels();
+    if (!models.some((m) => m.downloaded && m.id === (s.stt.model || DEFAULT_MODEL))) useModel(id);
+    else if (s.stt.provider !== "local") useModel(id);
+    toast("Model ready. Hold your key and talk!");
+  } catch (e) {
+    delete progress[id];
+    renderModels();
+    toast(String(e));
+  }
+}
+listen("model-progress", ({ payload }) => {
+  progress[payload.id] = payload;
+  renderModels();
+});
+
+function syncEngineViews() {
+  const local = s.stt.provider === "local";
+  $$(".when-local").forEach((x) => (x.style.display = local ? "" : "none"));
+  $$(".when-cloud").forEach((x) => (x.style.display = local ? "none" : ""));
+  $$(".engine-local").forEach((x) => (x.style.display = local ? "" : "none"));
+  $$(".engine-cloud").forEach((x) => (x.style.display = local ? "none" : ""));
+  $$('input[name="engine"]').forEach((r) => (r.checked = (r.value === "local") === local));
+}
+$$('input[name="engine"]').forEach((r) => (r.onchange = () => {
+  if (r.value === "local") s.stt.provider = "local";
+  else if (s.stt.provider === "local") s.stt.provider = "groq";
+  if (r.value === "cloud" && s.polish.provider === "ollama") s.polish.provider = "anthropic";
+  bindAll();
+  syncEngineViews();
+  save(true);
+}));
 
 // ---- styles ----
 function renderStyles() {
@@ -308,5 +398,7 @@ async function initAutostart() {
   renderModes();
   renderDictionary();
   initAutostart();
+  syncEngineViews();
+  loadModels();
   showSection(location.hash.slice(1) || "general");
 })();

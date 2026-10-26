@@ -12,6 +12,7 @@ pub const PROVIDERS: [&str; 4] = ["groq", "openai", "anthropic", "custom"];
 
 pub fn stt_key_name(p: SttProvider) -> &'static str {
     match p {
+        SttProvider::Local => "custom",
         SttProvider::Groq => "groq",
         SttProvider::OpenAi => "openai",
         SttProvider::Custom => "custom",
@@ -23,7 +24,7 @@ pub fn polish_key_name(p: PolishProvider) -> &'static str {
         PolishProvider::Anthropic => "anthropic",
         PolishProvider::Groq => "groq",
         PolishProvider::OpenAi => "openai",
-        PolishProvider::Custom => "custom",
+        PolishProvider::Ollama | PolishProvider::Custom => "custom",
     }
 }
 

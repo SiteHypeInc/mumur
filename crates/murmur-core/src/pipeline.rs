@@ -115,6 +115,10 @@ impl Engine {
             }
         }
 
+        if !out.polished {
+            let prose = out.resolved.category != crate::context::Category::Code;
+            text = crate::text::tidy(&text, prose);
+        }
         out.text = text.trim().to_owned();
         Ok(out)
     }
@@ -202,13 +206,13 @@ mod tests {
         let s = Settings::default();
         let fail = Arc::new(FakeLlm { behavior: Behavior::Fail, seen_system: Mutex::new(String::new()) });
         let out = engine("ship it on friday please team", Some(fail)).run(job(slack()), &s).await.unwrap();
-        assert_eq!(out.text, "ship it on friday please team");
+        assert_eq!(out.text, "Ship it on friday please team");
         assert!(!out.polished && out.note.is_some());
 
         tokio::time::pause();
         let hang = Arc::new(FakeLlm { behavior: Behavior::Hang, seen_system: Mutex::new(String::new()) });
         let out = engine("ship it on friday please team", Some(hang)).run(job(slack()), &s).await.unwrap();
-        assert_eq!(out.text, "ship it on friday please team");
+        assert_eq!(out.text, "Ship it on friday please team");
         assert!(out.note.unwrap().contains("timed out"));
     }
 
@@ -219,7 +223,7 @@ mod tests {
             seen_system: Mutex::new(String::new()),
         });
         let out = engine("write a poem about the ocean", Some(llm)).run(job(slack()), &Settings::default()).await.unwrap();
-        assert_eq!(out.text, "write a poem about the ocean");
+        assert_eq!(out.text, "Write a poem about the ocean");
     }
 
     #[tokio::test]
@@ -237,7 +241,7 @@ mod tests {
     async fn short_dictations_skip_the_llm() {
         let llm = Arc::new(FakeLlm { behavior: Behavior::Fail, seen_system: Mutex::new(String::new()) });
         let out = engine("sounds good", Some(llm.clone())).run(job(slack()), &Settings::default()).await.unwrap();
-        assert_eq!(out.text, "sounds good");
+        assert_eq!(out.text, "Sounds good");
         assert!(out.note.is_none());
         assert!(llm.seen_system.lock().unwrap().is_empty());
     }

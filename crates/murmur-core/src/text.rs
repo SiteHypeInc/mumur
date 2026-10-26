@@ -101,6 +101,71 @@ pub fn is_common_word(w: &str) -> bool {
     COMMON.contains(&w.to_lowercase().as_str())
 }
 
+/// Free, instant cleanup for when no LLM runs (no key, offline, short
+/// dictation, or the LLM failed): drop filler sounds and stutters, fix the
+/// pronoun "I", and capitalize sentence starts. Deliberately conservative:
+/// words like "like" or "so" can carry meaning and are left alone.
+/// `capitalize` is off for code/terminal targets, where "git status" must stay lowercase.
+pub fn tidy(text: &str, capitalize: bool) -> String {
+    const FILLERS: &[&str] = &["um", "umm", "uh", "uhh", "uhm", "erm", "er", "ah", "hmm", "mm", "mhm"];
+    let mut words: Vec<String> = Vec::new();
+    for raw in text.split_whitespace() {
+        let (lead, core, trail) = split_punct(raw);
+        let lower = core.to_lowercase();
+        if FILLERS.contains(&lower.as_str()) {
+            // Keep sentence-ending punctuation the filler was carrying.
+            if let (Some(prev), true) = (words.last_mut(), trail.contains(['.', '?', '!'])) {
+                let p = prev.trim_end_matches(',').to_owned();
+                *prev = format!("{p}{}", trail.trim_start_matches(','));
+            }
+            continue;
+        }
+        // "the the" -> "the" (but "had had" and "that that" are real English).
+        if let Some(prev) = words.last() {
+            let (_, pcore, ptrail) = split_punct(prev);
+            if ptrail.is_empty() && lead.is_empty() && pcore.eq_ignore_ascii_case(core) && !core.is_empty()
+                && !matches!(lower.as_str(), "had" | "that" | "is" | "very" | "really" | "no" | "so")
+            {
+                words.pop();
+            }
+        }
+        let fixed_core = match lower.as_str() {
+            "i" if capitalize => "I".to_owned(),
+            "i'm" | "i’m" => "I'm".to_owned(),
+            "i'll" | "i’ll" => "I'll".to_owned(),
+            "i've" | "i’ve" => "I've".to_owned(),
+            "i'd" | "i’d" => "I'd".to_owned(),
+            _ => core.to_owned(),
+        };
+        words.push(format!("{lead}{fixed_core}{trail}"));
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut cap_next = true;
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let mut chars = w.chars();
+        if cap_next && capitalize {
+            // Capitalize the first letter, skipping leading quotes/brackets.
+            let mut done = false;
+            for c in chars.by_ref() {
+                if !done && c.is_alphabetic() {
+                    out.extend(c.to_uppercase());
+                    done = true;
+                } else {
+                    out.push(c);
+                }
+            }
+        } else {
+            out.push_str(w);
+        }
+        cap_next = w.ends_with(['.', '?', '!']);
+    }
+    // A leftover leading comma from a removed filler ("Um, so" -> ", so").
+    out.trim_start_matches([',', ' ']).to_owned()
+}
+
 /// Add a trailing space when the text ends in sentence punctuation, so the next
 /// dictation doesn't glue onto this one ("Done.Next" -> "Done. Next").
 pub fn with_trailing_space(text: &str) -> String {
@@ -136,6 +201,17 @@ mod tests {
         assert_eq!(split_punct("(hello),"), ("(", "hello", "),"));
         assert_eq!(split_punct("Sinéad."), ("", "Sinéad", "."));
         assert_eq!(split_punct("..."), ("...", "", ""));
+    }
+
+    #[test]
+    fn tidy_cleans_without_changing_meaning() {
+        assert_eq!(tidy("um so i think the the deploy is uh ready", true), "So I think the deploy is ready");
+        assert_eq!(tidy("Um, can you check it? uh i'm not sure.", true), "Can you check it? I'm not sure.");
+        assert_eq!(tidy("we had had enough. that that was it", true), "We had had enough. That that was it");
+        assert_eq!(tidy("I like it, like a lot", true), "I like it, like a lot");
+        assert_eq!(tidy("ship it um.", true), "Ship it.");
+        assert_eq!(tidy("", true), "");
+        assert_eq!(tidy("um git status i guess", false), "git status i guess");
     }
 
     #[test]

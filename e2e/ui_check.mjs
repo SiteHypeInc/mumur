@@ -30,6 +30,13 @@ await page.addInitScript((settings) => {
       if (cmd === "history") return hist.filter((h) => !args.query || h.text.toLowerCase().includes(args.query.toLowerCase()));
       if (cmd === "test_connection") return "Transcription: Groq ✓ · Cleanup: Anthropic ✓";
       if (cmd === "plugin:autostart|is_enabled") return false;
+      if (cmd === "models") return [
+        { id: "tiny.en", label: "Tiny (English)", size_mb: 75, speed: 5, accuracy: 1, english_only: true, note: "Instant on anything; fine for short notes", downloaded: false },
+        { id: "base.en", label: "Base (English)", size_mb: 142, speed: 4, accuracy: 2, english_only: true, note: "Fast; good for quick messages", downloaded: true },
+        { id: "small.en", label: "Small (English)", size_mb: 466, speed: 3, accuracy: 3, english_only: true, note: "Balanced; solid accuracy on older Macs and PCs", downloaded: false },
+        { id: "large-v3-turbo-q5", label: "Large v3 Turbo", size_mb: 547, speed: 3, accuracy: 5, english_only: false, note: "Best accuracy, 99 languages. Recommended on Apple Silicon", downloaded: false },
+      ];
+      if (cmd === "download_model") { await new Promise((r) => setTimeout(r, 300)); return null; }
       return null;
     } },
     event: { listen: async () => () => {} },
@@ -38,6 +45,10 @@ await page.addInitScript((settings) => {
 
 await page.goto("file://" + path.resolve(uiDir, "settings.html") + "#setup");
 await page.waitForSelector("#setup.active");
+await page.waitForSelector("#setup [data-use]");
+await page.screenshot({ path: `${outDir}/0-setup-free.png`, fullPage: true });
+await page.click('#setup input[data-use="base.en"]');
+await page.click('input[name="engine"][value="cloud"]');
 await page.click("#test");
 await page.waitForFunction(() => document.querySelector("#test-result").textContent.includes("✓"));
 await page.screenshot({ path: `${outDir}/1-setup.png` });
@@ -50,6 +61,9 @@ await page.screenshot({ path: `${outDir}/2-general.png` });
 
 await page.click('nav a[data-s="engines"]');
 await page.selectOption('select[data-bind="stt.provider"]', "open_ai");
+await page.selectOption('select[data-bind="stt.provider"]', "local");
+await page.selectOption('select[data-bind="polish.provider"]', "ollama");
+await page.screenshot({ path: `${outDir}/3-engines-local.png`, fullPage: true });
 await page.selectOption('select[data-bind="stt.provider"]', "groq");
 await page.screenshot({ path: `${outDir}/3-engines.png` });
 

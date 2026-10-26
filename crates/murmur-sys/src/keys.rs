@@ -211,6 +211,11 @@ impl Matcher {
         }
     }
 
+    /// Any modifier physically held right now (as far as we've seen).
+    pub fn modifiers_down(&self) -> bool {
+        self.down.iter().any(|k| k.is_modifier())
+    }
+
     /// True if the current/last hold had other keys pressed during it.
     pub fn was_spoiled(&self) -> bool {
         self.spoiled

@@ -18,7 +18,10 @@ use crate::providers::stt::{OpenAiCompatibleStt, Transcriber};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SttProvider {
+    /// whisper.cpp on this machine: free, private, works offline. Built by the
+    /// app (murmur-local), not by `build_transcriber`.
     #[default]
+    Local,
     Groq,
     OpenAi,
     /// Any OpenAI-compatible server, e.g. a local whisper.cpp `whisper-server`.
@@ -32,13 +35,16 @@ pub enum PolishProvider {
     Anthropic,
     Groq,
     OpenAi,
-    /// Any OpenAI-compatible server, e.g. Ollama or LM Studio for fully local cleanup.
+    /// Ollama on this machine: free, private cleanup.
+    Ollama,
+    /// Any OpenAI-compatible server, e.g. LM Studio or llama.cpp server.
     Custom,
 }
 
 impl SttProvider {
     pub fn default_base_url(self) -> &'static str {
         match self {
+            SttProvider::Local => "",
             SttProvider::Groq => "https://api.groq.com/openai/v1",
             SttProvider::OpenAi => "https://api.openai.com/v1",
             SttProvider::Custom => "http://127.0.0.1:8080/v1",
@@ -46,6 +52,7 @@ impl SttProvider {
     }
     pub fn default_model(self) -> &'static str {
         match self {
+            SttProvider::Local => "large-v3-turbo-q5",
             SttProvider::Groq => "whisper-large-v3-turbo",
             SttProvider::OpenAi => "whisper-1",
             SttProvider::Custom => "whisper-1",
@@ -53,6 +60,7 @@ impl SttProvider {
     }
     pub fn label(self) -> &'static str {
         match self {
+            SttProvider::Local => "On-device",
             SttProvider::Groq => "Groq",
             SttProvider::OpenAi => "OpenAI",
             SttProvider::Custom => "Custom",
@@ -66,7 +74,8 @@ impl PolishProvider {
             PolishProvider::Anthropic => "https://api.anthropic.com",
             PolishProvider::Groq => "https://api.groq.com/openai/v1",
             PolishProvider::OpenAi => "https://api.openai.com/v1",
-            PolishProvider::Custom => "http://127.0.0.1:11434/v1",
+            PolishProvider::Ollama => "http://127.0.0.1:11434/v1",
+            PolishProvider::Custom => "http://127.0.0.1:1234/v1",
         }
     }
     pub fn default_model(self) -> &'static str {
@@ -74,7 +83,8 @@ impl PolishProvider {
             PolishProvider::Anthropic => ANTHROPIC_DEFAULT_MODEL,
             PolishProvider::Groq => "llama-3.3-70b-versatile",
             PolishProvider::OpenAi => "gpt-4.1-mini",
-            PolishProvider::Custom => "llama3.2",
+            PolishProvider::Ollama => "llama3.2",
+            PolishProvider::Custom => "local-model",
         }
     }
     pub fn label(self) -> &'static str {
@@ -82,6 +92,7 @@ impl PolishProvider {
             PolishProvider::Anthropic => "Anthropic",
             PolishProvider::Groq => "Groq",
             PolishProvider::OpenAi => "OpenAI",
+            PolishProvider::Ollama => "Ollama",
             PolishProvider::Custom => "Custom",
         }
     }
@@ -96,6 +107,8 @@ pub struct HotkeySettings {
     pub hold_threshold_ms: u64,
     /// Pressed while recording to discard it.
     pub cancel: String,
+    /// Re-paste the last dictation (for when an app swallowed it). Empty = off.
+    pub paste_last: String,
 }
 
 impl Default for HotkeySettings {
@@ -105,6 +118,8 @@ impl Default for HotkeySettings {
             mode: ActivationMode::Hybrid,
             hold_threshold_ms: 350,
             cancel: "Escape".into(),
+            // Linux can't swallow shortcuts (X11 listener), so use a key apps leave alone.
+            paste_last: if cfg!(target_os = "linux") { "F9".into() } else { "Ctrl+Alt+V".into() },
         }
     }
 }
@@ -228,6 +243,9 @@ impl Settings {
 
     pub fn build_transcriber(&self, api_key: Option<String>) -> Result<Arc<dyn Transcriber>> {
         let p = self.stt.provider;
+        if p == SttProvider::Local {
+            return Err(Error::Settings("on-device transcription is set up by the app".into()));
+        }
         if p != SttProvider::Custom && api_key.as_deref().is_none_or(|k| k.trim().is_empty()) {
             return Err(Error::NotConfigured(format!("a {} API key for transcription", p.label())));
         }
@@ -253,7 +271,7 @@ impl Settings {
                 a.base_url = or_default(&self.polish.base_url, p.default_base_url());
                 Some(Arc::new(a))
             }
-            PolishProvider::Custom => Some(Arc::new(OpenAiCompatiblePolisher::new(
+            PolishProvider::Custom | PolishProvider::Ollama => Some(Arc::new(OpenAiCompatiblePolisher::new(
                 p.label(),
                 &or_default(&self.polish.base_url, p.default_base_url()),
                 key,
@@ -297,15 +315,17 @@ mod tests {
 
     #[test]
     fn providers_need_keys() {
-        let s = Settings::default();
+        let mut s = Settings::default();
+        assert_eq!(s.stt.provider, SttProvider::Local, "free on-device is the default");
+        s.stt.provider = SttProvider::Groq;
         assert!(s.build_transcriber(None).is_err());
         assert!(s.build_transcriber(Some("gsk".into())).is_ok());
         assert!(s.build_polisher(None).is_none());
         assert!(s.build_polisher(Some("sk-ant".into())).is_some());
         let mut local = Settings::default();
         local.stt.provider = SttProvider::Custom;
-        local.polish.provider = PolishProvider::Custom;
+        local.polish.provider = PolishProvider::Ollama;
         assert!(local.build_transcriber(None).is_ok());
-        assert!(local.build_polisher(None).is_some());
+        assert!(local.build_polisher(None).is_some(), "Ollama needs no key");
     }
 }

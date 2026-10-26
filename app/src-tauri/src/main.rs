@@ -3,19 +3,17 @@
 
 mod commands;
 mod controller;
+mod local;
 mod overlay;
 mod secrets;
+mod tray;
 
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use controller::Controller;
 
-fn open_settings(app: &AppHandle, section: &str) {
+pub fn open_settings(app: &AppHandle, section: &str) {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.eval(format!("window.showSection && window.showSection({section:?})"));
         let _ = w.show();
@@ -55,6 +53,9 @@ fn main() {
             commands::request_permissions,
             commands::set_paused,
             commands::toggle_recording,
+            commands::models,
+            commands::download_model,
+            commands::delete_model,
         ])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
@@ -64,42 +65,23 @@ fn main() {
             let handle = app.handle().clone();
             let dir = app.path().app_config_dir()?;
             let data = app.path().app_data_dir()?;
-            let ctl = Controller::new(handle.clone(), dir.join("settings.toml"), data.join("history.sqlite3"));
+            let ctl = Controller::new(handle.clone(), dir.join("settings.toml"), data.join("history.sqlite3"), data.join("models"));
             app.manage(ctl.clone());
             overlay::create(&handle)?;
             ctl.start();
+            ctl.prewarm();
 
-            let open = MenuItem::with_id(app, "open", "Settings…", true, None::<&str>)?;
-            let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
-            let toggle = MenuItem::with_id(app, "toggle", "Start / stop dictation", true, None::<&str>)?;
-            let pause = CheckMenuItem::with_id(app, "pause", "Pause hotkey", true, false, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Murmur", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&toggle, &open, &history, &sep, &pause, &quit])?;
-            let pause_item = pause.clone();
-            let mut tray = TrayIconBuilder::with_id("murmur")
-                .tooltip("Murmur")
-                .menu(&menu)
-                .on_menu_event(move |app, ev| match ev.id().as_ref() {
-                    "open" => open_settings(app, "general"),
-                    "history" => open_settings(app, "history"),
-                    "toggle" => app.state::<Arc<Controller>>().inner().toggle(),
-                    "pause" => {
-                        let ctl = app.state::<Arc<Controller>>();
-                        let now = !ctl.paused.load(Ordering::SeqCst);
-                        ctl.paused.store(now, Ordering::SeqCst);
-                        let _ = pause_item.set_checked(now);
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                });
-            // Monochrome template icon so macOS tints it for light/dark menu bars.
-            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
-            tray = tray.icon(icon).icon_as_template(true);
-            tray.build(app)?;
+            tray::install(&handle)?;
 
             // First run: nothing configured yet, so show onboarding.
-            let configured = secrets::PROVIDERS.iter().any(|p| secrets::get(p).is_some());
+            let configured = {
+                let s = ctl.settings.read().unwrap();
+                if s.stt.provider == murmur_core::config::SttProvider::Local {
+                    ctl.local.is_ready(local::LocalEngine::model_id(&s.stt.model))
+                } else {
+                    secrets::PROVIDERS.iter().any(|p| secrets::get(p).is_some())
+                }
+            };
             if !configured || ctl.hotkey_error.lock().unwrap().is_some() {
                 open_settings(&handle, "setup");
             }

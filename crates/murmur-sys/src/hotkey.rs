@@ -12,6 +12,8 @@ pub enum HotkeyEvent {
     Interrupted,
     /// The cancel key (Escape) while armed.
     Cancel,
+    /// The "paste my last dictation again" shortcut.
+    PasteLast,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +33,7 @@ pub struct Dispatch {
     matcher: Matcher,
     cancel: Option<Matcher>,
     cancel_armed: bool,
+    paste_last: Option<Matcher>,
     sink: Sink,
 }
 
@@ -53,6 +56,13 @@ impl Dispatch {
                 swallow = true;
             }
         }
+        if let Some(p) = self.paste_last.as_mut() {
+            let (edge, verdict) = p.on_key(key, pressed);
+            if edge == Some(Edge::Pressed) {
+                (self.sink)(HotkeyEvent::PasteLast);
+            }
+            swallow |= verdict == Verdict::Consume;
+        }
         swallow
     }
 
@@ -61,6 +71,9 @@ impl Dispatch {
         self.matcher.reset();
         if let Some(c) = self.cancel.as_mut() {
             c.reset();
+        }
+        if let Some(p) = self.paste_last.as_mut() {
+            p.reset();
         }
     }
 }
@@ -77,6 +90,7 @@ impl Hotkeys {
             matcher: Matcher::new(Binding::parse(binding)?),
             cancel: Binding::parse(cancel).ok().map(Matcher::new),
             cancel_armed: false,
+            paste_last: None,
             sink: Box::new(sink),
         }));
         backend::start_listener(dispatch.clone())?;
@@ -88,6 +102,27 @@ impl Hotkeys {
         let mut d = self.dispatch.lock().unwrap();
         d.matcher = Matcher::new(b);
         Ok(())
+    }
+
+    /// Shortcut that re-pastes the last dictation; empty disables it.
+    pub fn set_paste_last(&self, binding: &str) -> Result<(), HotkeyError> {
+        let m = if binding.trim().is_empty() { None } else { Some(Matcher::new(Binding::parse(binding)?)) };
+        self.dispatch.lock().unwrap().paste_last = m;
+        Ok(())
+    }
+
+    /// Block until no modifier is held (or `timeout`), so a synthetic Ctrl+V
+    /// isn't merged with keys the user is still holding (Ctrl+Alt+V ≠ paste).
+    pub fn wait_for_modifier_release(&self, timeout: std::time::Duration) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            let held = self.dispatch.lock().unwrap().matcher.modifiers_down()
+                || self.dispatch.lock().unwrap().paste_last.as_ref().is_some_and(|m| m.modifiers_down());
+            if !held {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
     }
 
     /// Only swallow Escape while a recording is live.
@@ -143,19 +178,43 @@ mod backend {
         }
     }
 
-    /// rdev's passive listener: a low-level hook on Windows, XRecord on X11.
-    /// It can't swallow events, so non-mac defaults are modifier-only (Ctrl+Win).
+    fn event(ev: &rdev::Event) -> Option<(Key, bool)> {
+        match ev.event_type {
+            rdev::EventType::KeyPress(k) => Some((map(k), true)),
+            rdev::EventType::KeyRelease(k) => Some((map(k), false)),
+            _ => None,
+        }
+    }
+
+    /// Windows: a grabbing low-level hook, so matched shortcut keys are swallowed.
+    #[cfg(target_os = "windows")]
+    pub fn start_listener(dispatch: Arc<Mutex<Dispatch>>) -> Result<(), HotkeyError> {
+        std::thread::Builder::new()
+            .name("murmur-hotkey".into())
+            .spawn(move || {
+                let res = rdev::grab(move |ev| match event(&ev) {
+                    Some((key, pressed)) if dispatch.lock().unwrap().on_key(key, pressed) => None,
+                    _ => Some(ev),
+                });
+                if let Err(e) = res {
+                    log::error!("hotkey hook stopped: {e:?}");
+                }
+            })
+            .map_err(|e| HotkeyError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Linux/X11: rdev's passive listener (XRecord). It can't swallow keys, so
+    /// prefer modifier-only bindings or keys apps don't use (F9, F13).
+    #[cfg(not(target_os = "windows"))]
     pub fn start_listener(dispatch: Arc<Mutex<Dispatch>>) -> Result<(), HotkeyError> {
         std::thread::Builder::new()
             .name("murmur-hotkey".into())
             .spawn(move || {
                 let res = rdev::listen(move |ev| {
-                    let (key, pressed) = match ev.event_type {
-                        rdev::EventType::KeyPress(k) => (map(k), true),
-                        rdev::EventType::KeyRelease(k) => (map(k), false),
-                        _ => return,
-                    };
-                    dispatch.lock().unwrap().on_key(key, pressed);
+                    if let Some((key, pressed)) = event(&ev) {
+                        dispatch.lock().unwrap().on_key(key, pressed);
+                    }
                 });
                 if let Err(e) = res {
                     log::error!("hotkey listener stopped: {e:?}");
@@ -178,6 +237,7 @@ mod tests {
             matcher: Matcher::new(Binding::parse("RightOption").unwrap()),
             cancel: Binding::parse("Escape").ok().map(Matcher::new),
             cancel_armed: false,
+            paste_last: Binding::parse("Ctrl+Alt+V").ok().map(Matcher::new),
             sink: Box::new(move |e| tx.send(e).unwrap()),
         };
         assert!(!d.on_key(Key::Escape, true));
@@ -186,7 +246,11 @@ mod tests {
         d.on_key(Key::RightAlt, false);
         d.cancel_armed = true;
         assert!(d.on_key(Key::Escape, true));
+        d.on_key(Key::Escape, false);
+        d.on_key(Key::LeftCtrl, true);
+        d.on_key(Key::LeftAlt, true);
+        assert!(d.on_key(Key::Char('v'), true), "paste-last combo is swallowed");
         let got: Vec<_> = rx.try_iter().collect();
-        assert_eq!(got, vec![HotkeyEvent::Pressed, HotkeyEvent::Released, HotkeyEvent::Cancel]);
+        assert_eq!(got, vec![HotkeyEvent::Pressed, HotkeyEvent::Released, HotkeyEvent::Cancel, HotkeyEvent::PasteLast]);
     }
 }

@@ -5,12 +5,18 @@ edition.workspace = true
 license.workspace = true
 description = "Fast, private voice dictation for any app."
 
+[features]
+default = ["local"]
+# On-device whisper.cpp. Off only for cross-target type checks.
+local = ["dep:murmur-local"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 murmur-core = { path = "../../crates/murmur-core" }
 murmur-sys = { path = "../../crates/murmur-sys" }
+murmur-local = { path = "../../crates/murmur-local", optional = true }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
