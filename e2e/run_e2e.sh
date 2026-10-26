@@ -6,6 +6,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-$(mktemp -d)}"
 BIN="${BIN:-$HERE/../target/debug/murmur}"
 export DISPLAY=:98 HOME="$WORK/home"
+# Runners set XDG_* dirs; point them at our sandbox so the test settings are used.
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache"
 mkdir -p "$HOME/.config/app.murmur.dictation"
 python3 -I "$HERE/make_audio.py" "$WORK/mic.raw"
 # A clocked fake microphone: PulseAudio null sink; we play "speech" into it
