@@ -65,6 +65,7 @@ CLIP="$(timeout 2 xclip -selection clipboard -o 2>/dev/null)"
 echo "--- requests"; cat "$WORK/requests.log" 2>/dev/null
 echo "--- field: [$FIELD]"
 echo "--- clipboard after: [$CLIP]"
+PULSE="$(pactl info 2>&1 | grep -E "Default Source|Server Name|Connection failure")"
 kill $APP $TK $MOCK $XV 2>/dev/null; pulseaudio --kill 2>/dev/null; wait 2>/dev/null
 ok=1
 [[ "$FIRST" == "Draft: Can you push it to GitHub before Friday? " ]] || { echo "x text not inserted as expected: [$FIRST]"; ok=0; }
@@ -73,4 +74,7 @@ ok=1
 grep -q '"system_has_work_chat": true' "$WORK/requests.log" || { echo "x app not classified as work chat"; ok=0; }
 grep -q '"vocab": true' "$WORK/requests.log" || { echo "x vocabulary not sent to STT"; ok=0; }
 if [[ $ok == 1 ]]; then echo "E2E PASS"; exit 0; fi
-echo "E2E FAIL. App log:"; grep -vE "ALSA|[Jj]ack|Cannot connect|libEGL|dbind" "$WORK/app.log" | tail -40; exit 1
+echo "E2E FAIL. Diagnostics:"
+echo "$PULSE" | sed 's/^/x | pulse: /'
+grep -vE "ALSA|[Jj]ack|Cannot connect|libEGL|dbind|JackShm" "$WORK/app.log" | tail -30 | sed 's/^/x | app: /'
+exit 1
