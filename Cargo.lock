@@ -2935,6 +2935,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "rdev",
+ "serde",
  "thiserror 2.0.21",
  "windows-sys 0.60.2",
 ]

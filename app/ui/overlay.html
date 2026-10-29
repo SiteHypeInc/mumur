@@ -68,32 +68,6 @@
     });
   });
 
-  // Tiny synthesized cues: no audio files to ship, no latency.
-  let ctx;
-  function tone(freqs, dur = 0.07, gain = 0.06) {
-    ctx = ctx || new AudioContext();
-    const t0 = ctx.currentTime;
-    freqs.forEach((f, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "sine"; o.frequency.value = f;
-      const start = t0 + i * dur;
-      g.gain.setValueAtTime(0, start);
-      g.gain.linearRampToValueAtTime(gain, start + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, start + dur + 0.08);
-      o.connect(g).connect(ctx.destination);
-      o.start(start); o.stop(start + dur + 0.1);
-    });
-  }
-  let soundsOn = true;
-  window.__TAURI__.core.invoke("overview").then((o) => { soundsOn = o.settings.audio.sounds; }).catch(() => {});
-  listen("settings-changed", ({ payload }) => { soundsOn = payload.audio.sounds; });
-  listen("sound", ({ payload: kind }) => {
-    if (!soundsOn) return;
-    if (kind === "start") tone([660, 880]);
-    else if (kind === "stop") tone([880, 660]);
-    else if (kind === "cancel") tone([440], 0.09, 0.05);
-    else if (kind === "error") tone([330, 262], 0.1, 0.05);
-  });
 </script>
 </body>
 </html>

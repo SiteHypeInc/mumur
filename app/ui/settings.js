@@ -90,6 +90,7 @@ function syncBinding() {
   sel.value = s.hotkey.binding;
   $("#binding-input").value = s.hotkey.binding;
   $("#hotkey-name").textContent = s.hotkey.binding;
+  $$(".hk-name").forEach((k) => (k.textContent = s.hotkey.binding));
 }
 
 function esc(t) {
@@ -98,12 +99,8 @@ function esc(t) {
 
 // ---- setup ----
 function renderSetup() {
-  const badge = (el, ok, label) => {
-    el.textContent = `${ok ? "✓" : "•"} ${label}`;
-    el.className = "badge " + (ok ? "yes" : "no");
-  };
-  badge($("#perm-ax"), state.accessibility, "Accessibility");
-  badge($("#perm-im"), state.input_monitoring, "Input Monitoring");
+  renderHotkeyStatus(state.hotkey_status);
+  $("#mic-device").textContent = s.audio.device || state.default_input || "";
   $("#hotkey-error").textContent = state.hotkey_error || "";
   $$("[data-key]").forEach((inp) => {
     inp.classList.toggle("saved", !!state.keys[inp.dataset.key]);
@@ -122,11 +119,67 @@ function renderSetup() {
     };
   });
 }
-$("#grant").onclick = async () => {
-  const [ax, im] = await invoke("request_permissions");
-  state.accessibility = ax;
-  state.input_monitoring = im;
-  renderSetup();
+// ---- diagnostics ----
+const HK_TEXT = {
+  active: ["✓ Ready", "yes", ""],
+  listen_only: ["✓ Ready (basic)", "yes", "Works now. Allow Accessibility too so Murmur can paste and keep key combos from typing."],
+  waiting_for_permission: ["Waiting for permission", "wait",
+    "Turn Murmur on under Input Monitoring and Accessibility. It starts working within a couple of seconds; no restart needed."],
+};
+function renderHotkeyStatus(st) {
+  const [label, cls, hint] = HK_TEXT[st] || HK_TEXT.waiting_for_permission;
+  const el = $("#hk-status");
+  el.textContent = label;
+  el.className = "badge " + cls;
+  $("#hk-hint").textContent = state.platform === "macos" ? hint : "";
+}
+setInterval(async () => {
+  if (!$("#setup").classList.contains("active")) return;
+  try {
+    state.hotkey_status = await invoke("hotkey_status");
+    renderHotkeyStatus(state.hotkey_status);
+  } catch {}
+}, 2000);
+listen("hotkey-test", ({ payload: down }) => {
+  const live = $("#hk-live");
+  live.classList.toggle("hit", down);
+  if (!down) {
+    live.classList.add("ok");
+    live.innerHTML = `✓ Got it, your key works`;
+  }
+});
+$$("[data-pane]").forEach((b) => (b.onclick = () => invoke("open_privacy", { pane: b.dataset.pane })));
+$("#relaunch").onclick = () => invoke("relaunch");
+$("#reset-perms").onclick = () => {
+  if (confirm("Reset Murmur's macOS permissions and relaunch? You'll be asked to allow them again.")) invoke("reset_permissions");
+};
+$("#mic-test").onclick = async () => {
+  const btn = $("#mic-test"), hint = $("#mic-hint"), bar = $("#mic-bar");
+  btn.disabled = true;
+  hint.className = "hint";
+  hint.textContent = "Listening… say something";
+  bar.style.width = "0";
+  try {
+    const r = await invoke("test_microphone");
+    bar.style.width = Math.round(Math.min(1, r.level) * 100) + "%";
+    $("#mic-device").textContent = r.device || "";
+    if (r.max_sample === 0) {
+      hint.className = "error";
+      hint.textContent = state.platform === "macos"
+        ? "Murmur is getting silence: the mic is blocked. Click Open Microphone settings, turn Murmur on, then relaunch."
+        : "No audio from this microphone. Pick another one in General.";
+    } else if (r.level < 0.05) {
+      hint.className = "hint";
+      hint.textContent = "Very quiet. Speak up, or pick a different mic in General (Bluetooth earbuds can take a second to switch on).";
+    } else {
+      hint.className = "hint ok";
+      hint.textContent = "✓ Sounds good";
+    }
+  } catch (e) {
+    hint.className = "error";
+    hint.textContent = String(e);
+  }
+  btn.disabled = false;
 };
 $("#test").onclick = async () => {
   const out = $("#test-result");

@@ -16,6 +16,15 @@ pub enum HotkeyEvent {
     PasteLast,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HotkeyStatus {
+    Active,
+    /// macOS with Input Monitoring but not Accessibility: works, can't swallow keys.
+    ListenOnly,
+    WaitingForPermission,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HotkeyError {
     #[error("{0}")]
@@ -102,6 +111,13 @@ impl Hotkeys {
         let mut d = self.dispatch.lock().unwrap();
         d.matcher = Matcher::new(b);
         Ok(())
+    }
+
+    pub fn status(&self) -> HotkeyStatus {
+        #[cfg(target_os = "macos")]
+        return crate::macos::listener_status();
+        #[cfg(not(target_os = "macos"))]
+        return HotkeyStatus::Active;
     }
 
     /// Shortcut that re-pastes the last dictation; empty disables it.

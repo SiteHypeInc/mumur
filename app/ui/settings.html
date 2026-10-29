@@ -28,12 +28,27 @@
     <p class="lead">Hold your dictation key, speak, let go. Murmur types clean, punctuated text wherever your cursor is.</p>
     <ol class="steps">
       <li id="step-perms">
-        <h3>1 · Allow Murmur to listen and type</h3>
-        <p class="hint mac-only">macOS asks for three permissions: <b>Microphone</b> (on first dictation), <b>Accessibility</b> (to paste), and <b>Input Monitoring</b> (for the hotkey). Restart Murmur after granting Input Monitoring.</p>
-        <p class="hint not-mac">No extra permissions needed on this platform.</p>
-        <div class="row mac-only"><span id="perm-ax" class="badge"></span><span id="perm-im" class="badge"></span>
-          <button class="mac-only" id="grant">Open permission prompts</button></div>
-        <p class="error" id="hotkey-error"></p>
+        <h3>1 · Check your keyboard and microphone</h3>
+        <div class="diag">
+          <div class="diag-row">
+            <div><b>Keyboard</b> <span id="hk-status" class="badge"></span>
+              <div class="hint" id="hk-hint"></div></div>
+            <div id="hk-live" class="live">Press <kbd class="hk-name">Fn</kbd></div>
+          </div>
+          <div class="row mac-only">
+            <button data-pane="input_monitoring">Open Input Monitoring</button>
+            <button data-pane="accessibility">Open Accessibility</button>
+          </div>
+          <div class="diag-row">
+            <div><b>Microphone</b> <span id="mic-device" class="opt"></span>
+              <div class="hint" id="mic-hint">Click Test, then say a few words.</div></div>
+            <div class="row"><div class="bar mic"><i id="mic-bar"></i></div><button id="mic-test">Test</button></div>
+          </div>
+          <div class="row mac-only"><button data-pane="microphone">Open Microphone settings</button></div>
+          <p class="hint mac-only">Granted everything but it still doesn't work? macOS ties permissions to the exact copy of the app, so a grant made while Murmur ran from the download folder doesn't carry over. Use
+            <button class="link" id="reset-perms">Reset permissions &amp; relaunch</button>, then allow again when asked. Or just <button class="link" id="relaunch">Relaunch Murmur</button>.</p>
+          <p class="error" id="hotkey-error"></p>
+        </div>
       </li>
       <li>
         <h3>2 · Pick your engine</h3>

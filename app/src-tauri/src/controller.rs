@@ -16,6 +16,7 @@ use murmur_sys::capture::Recorder;
 use murmur_sys::frontmost::{self, Target};
 use murmur_sys::hotkey::{HotkeyEvent, Hotkeys};
 use murmur_sys::paste::{self, InsertOptions};
+use murmur_sys::sound::Cue;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -148,6 +149,10 @@ impl Controller {
     fn event_loop(self: Arc<Self>, rx: Receiver<HotkeyEvent>) {
         let epoch = Instant::now();
         while let Ok(ev) = rx.recv() {
+            // Lets the Get started screen show "✓ key detected" live.
+            if matches!(ev, HotkeyEvent::Pressed | HotkeyEvent::Released) {
+                let _ = self.app.emit("hotkey-test", ev == HotkeyEvent::Pressed);
+            }
             if self.paused.load(Ordering::SeqCst) {
                 continue;
             }
@@ -201,7 +206,7 @@ impl Controller {
         if let Err(e) = self.recorder.start(Some(device)) {
             self.machine.lock().unwrap().reset();
             overlay::set(&self.app, PillState::Message { text: e.to_string(), tone: "error" });
-            overlay::sound(&self.app, "error");
+            self.cue(Cue::Error);
             self.hide_later(2500);
             return;
         }
@@ -227,7 +232,7 @@ impl Controller {
         *self.session.lock().unwrap() = Some(Session { started: Instant::now(), snapshot, probe: Some(probe) });
 
         overlay::set(&self.app, PillState::Recording { mode: None });
-        overlay::sound(&self.app, "start");
+        self.cue(Cue::Start);
 
         // Level meter + max-duration guard.
         let me = self.clone();
@@ -254,7 +259,7 @@ impl Controller {
         }
         self.session.lock().unwrap().take();
         if by_user {
-            overlay::sound(&self.app, "cancel");
+            self.cue(Cue::Cancel);
         }
         overlay::set(&self.app, PillState::Hidden);
     }
@@ -266,7 +271,7 @@ impl Controller {
         if let Some(h) = self.hotkeys.lock().unwrap().as_ref() {
             h.arm_cancel(false);
         }
-        overlay::sound(&self.app, "stop");
+        self.cue(Cue::Stop);
         overlay::set(&self.app, PillState::Processing);
         let me = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -296,6 +301,13 @@ impl Controller {
         };
         let engine = Engine { transcriber, polisher: settings.build_polisher(polish_key) };
         log::info!("captured {} samples, {:.1} dBFS", samples.len(), murmur_core::audio::rms_dbfs(&samples));
+        if murmur_core::audio::is_digital_silence(&samples) {
+            return self.fail(if cfg!(target_os = "macos") {
+                "Mic is blocked: allow Murmur in Privacy & Security → Microphone"
+            } else {
+                "No audio from the microphone. Check your input device"
+            });
+        }
         let job = Job { samples, context: snap.target.context.clone(), surrounding_text: snap.surrounding };
         let outcome = match engine.run(job, &settings).await {
             Ok(o) => o,
@@ -412,8 +424,40 @@ impl Controller {
     fn fail(self: &Arc<Self>, message: &str) {
         log::warn!("dictation failed: {message}");
         overlay::set(&self.app, PillState::Message { text: message.to_owned(), tone: "error" });
-        overlay::sound(&self.app, "error");
+        self.cue(Cue::Error);
         self.hide_later(3000);
+    }
+
+    fn cue(&self, cue: Cue) {
+        if self.settings.read().unwrap().audio.sounds {
+            murmur_sys::sound::play(cue);
+        }
+    }
+
+    pub fn hotkey_status(&self) -> murmur_sys::hotkey::HotkeyStatus {
+        self.hotkeys
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|h| h.status())
+            .unwrap_or(murmur_sys::hotkey::HotkeyStatus::WaitingForPermission)
+    }
+
+    /// Record ~2 s and report the loudest level, for the "Test microphone" button.
+    pub fn test_microphone(&self) -> Result<(f32, f32), String> {
+        if self.recorder.is_recording() {
+            return Err("Busy dictating".into());
+        }
+        let device = self.settings.read().unwrap().audio.device.clone();
+        self.recorder.start(Some(device)).map_err(|e| e.to_string())?;
+        let mut peak = 0f32;
+        for _ in 0..40 {
+            std::thread::sleep(Duration::from_millis(50));
+            peak = peak.max(self.recorder.level());
+        }
+        let samples = self.recorder.stop();
+        let max = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+        Ok((peak, max))
     }
 
     /// Latest dictations as (id, text), newest first. Falls back to the

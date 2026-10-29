@@ -3,7 +3,7 @@
 
 use std::ffi::c_void;
 use std::process::Command;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use murmur_core::context::AppContext;
 use objc2_app_kit::NSWorkspace;
 
-use crate::hotkey::{Dispatch, HotkeyError};
+use crate::hotkey::{Dispatch, HotkeyError, HotkeyStatus};
 use crate::keys::Key;
 
 // ---- Accessibility FFI -------------------------------------------------------
@@ -282,71 +282,95 @@ fn modifier_down(key: Key, flags: u64) -> Option<bool> {
 
 static TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Runs the tap on its own thread for the life of the process.
-pub fn start_listener(dispatch: Arc<Mutex<Dispatch>>) -> Result<(), HotkeyError> {
-    if !input_monitoring_granted(true) {
-        return Err(HotkeyError::Permission(
-            "Allow Murmur under System Settings → Privacy & Security → Input Monitoring, then restart it".into(),
-        ));
+/// 0 = waiting for permission, 1 = active tap (can swallow keys), 2 = listen-only.
+static TAP_STATUS: AtomicU8 = AtomicU8::new(0);
+
+pub fn listener_status() -> HotkeyStatus {
+    match TAP_STATUS.load(Ordering::SeqCst) {
+        1 => HotkeyStatus::Active,
+        2 => HotkeyStatus::ListenOnly,
+        _ => HotkeyStatus::WaitingForPermission,
     }
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), HotkeyError>>();
+}
+
+fn make_tap(options: CGEventTapOptions, d: Arc<Mutex<Dispatch>>) -> Result<CGEventTap<'static>, ()> {
+    CGEventTap::new(
+        CGEventTapLocation::Session,
+        CGEventTapPlacement::HeadInsertEventTap,
+        options,
+        vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
+        move |_proxy, etype, event| {
+            match etype {
+                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                    let port = TAP_PORT.load(Ordering::SeqCst);
+                    if !port.is_null() {
+                        unsafe { CGEventTapEnable(port, true) };
+                    }
+                    d.lock().unwrap().reset();
+                    return CallbackResult::Keep;
+                }
+                _ => {}
+            }
+            let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+            let key = key_from_code(code);
+            let pressed = match etype {
+                CGEventType::KeyDown => true,
+                CGEventType::KeyUp => false,
+                CGEventType::FlagsChanged => match modifier_down(key, event.get_flags().bits()) {
+                    Some(down) => down,
+                    None => return CallbackResult::Keep,
+                },
+                _ => return CallbackResult::Keep,
+            };
+            if d.lock().unwrap().on_key(key, pressed) {
+                CallbackResult::Drop
+            } else {
+                CallbackResult::Keep
+            }
+        },
+    )
+}
+
+/// Installs the keyboard tap on its own thread, retrying until macOS allows
+/// it. Permission is often granted *after* launch (that's what onboarding
+/// asks for), so a one-shot attempt would leave the hotkey dead until a
+/// relaunch. An active tap needs Accessibility; with only Input Monitoring we
+/// fall back to listen-only (works, but can't swallow combo keys).
+pub fn start_listener(dispatch: Arc<Mutex<Dispatch>>) -> Result<(), HotkeyError> {
+    // Make sure Murmur is listed in both Privacy panes.
+    let _ = input_monitoring_granted(true);
+    let _ = accessibility_trusted(true);
     std::thread::Builder::new()
         .name("murmur-hotkey".into())
         .spawn(move || {
-            let d = dispatch.clone();
-            let tap = CGEventTap::new(
-                CGEventTapLocation::Session,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default,
-                vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
-                move |_proxy, etype, event| {
-                    match etype {
-                        CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-                            let port = TAP_PORT.load(Ordering::SeqCst);
-                            if !port.is_null() {
-                                unsafe { CGEventTapEnable(port, true) };
-                            }
-                            d.lock().unwrap().reset();
-                            return CallbackResult::Keep;
-                        }
-                        _ => {}
+            let mut logged = false;
+            loop {
+                for (options, status) in [(CGEventTapOptions::Default, 1u8), (CGEventTapOptions::ListenOnly, 2u8)] {
+                    // A listen-only tap can be created without permission and then
+                    // silently receive nothing, so only accept it when it's allowed.
+                    if status == 2 && !input_monitoring_granted(false) {
+                        continue;
                     }
-                    let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
-                    let key = key_from_code(code);
-                    let pressed = match etype {
-                        CGEventType::KeyDown => true,
-                        CGEventType::KeyUp => false,
-                        CGEventType::FlagsChanged => match modifier_down(key, event.get_flags().bits()) {
-                            Some(down) => down,
-                            None => return CallbackResult::Keep,
-                        },
-                        _ => return CallbackResult::Keep,
-                    };
-                    if d.lock().unwrap().on_key(key, pressed) {
-                        CallbackResult::Drop
-                    } else {
-                        CallbackResult::Keep
-                    }
-                },
-            );
-            let tap = match tap {
-                Ok(t) => t,
-                Err(()) => {
-                    let _ = ready_tx.send(Err(HotkeyError::Permission(
-                        "Could not watch the keyboard. Allow Murmur under Privacy & Security → Accessibility and Input Monitoring".into(),
-                    )));
-                    return;
+                    let Ok(tap) = make_tap(options, dispatch.clone()) else { continue };
+                    TAP_PORT.store(tap.mach_port().as_concrete_TypeRef() as *mut c_void, Ordering::SeqCst);
+                    let Ok(source) = tap.mach_port().create_runloop_source(0) else { continue };
+                    unsafe { CFRunLoop::get_current().add_source(&source, kCFRunLoopCommonModes) };
+                    tap.enable();
+                    TAP_STATUS.store(status, Ordering::SeqCst);
+                    log::info!("keyboard tap installed ({})", if status == 1 { "active" } else { "listen-only" });
+                    CFRunLoop::run_current();
+                    // run_current only returns if the run loop is stopped; try again.
+                    TAP_STATUS.store(0, Ordering::SeqCst);
                 }
-            };
-            TAP_PORT.store(tap.mach_port().as_concrete_TypeRef() as *mut c_void, Ordering::SeqCst);
-            let source = tap.mach_port().create_runloop_source(0).expect("run loop source");
-            unsafe { CFRunLoop::get_current().add_source(&source, kCFRunLoopCommonModes) };
-            tap.enable();
-            let _ = ready_tx.send(Ok(()));
-            CFRunLoop::run_current();
+                if !logged {
+                    log::warn!("keyboard tap not allowed yet; waiting for Accessibility / Input Monitoring");
+                    logged = true;
+                }
+                std::thread::sleep(Duration::from_secs(2));
+            }
         })
         .map_err(|e| HotkeyError::Backend(e.to_string()))?;
-    ready_rx.recv_timeout(Duration::from_secs(3)).map_err(|_| HotkeyError::Backend("hotkey thread did not start".into()))?
+    Ok(())
 }
 
 #[cfg(test)]

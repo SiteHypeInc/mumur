@@ -49,8 +49,9 @@ Grab the latest build from **[Releases](../../releases)**: the `.dmg` for macOS 
 1. Drag **Murmur** to Applications and open it. Builds aren't notarized yet, so the first time, **right-click → Open**. If macOS still refuses, run:
    `xattr -dr com.apple.quarantine /Applications/Murmur.app`
 2. Murmur lives in the **menu bar** (the little waveform), not the Dock. To keep it on your Desktop too, ⌥⌘-drag it from Applications to make an alias.
-3. Grant **Input Monitoring** (for the Fn key), then quit and reopen Murmur.
-4. Grant **Accessibility** (to paste), and **Microphone** on your first dictation.
+3. On **Get started**, turn Murmur on under **Input Monitoring** and **Accessibility**. The Keyboard check turns green within a couple of seconds; press your key to confirm.
+4. Click **Test** next to Microphone and allow the mic when macOS asks.
+   - **Fn doesn't respond, or the mic test says "silence"?** macOS ties permissions to the exact copy of the app, so a grant made while Murmur ran from the DMG or Downloads (or before an update) goes stale. Click **Reset permissions & relaunch** and allow again.
 5. Under **Get started**, pick **Free & private** and download a model (Large v3 Turbo is recommended on Apple Silicon), or pick **Cloud** and paste your keys.
 6. Click into any text box and hold **Fn**.
 

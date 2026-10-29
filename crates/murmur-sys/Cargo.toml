@@ -9,6 +9,7 @@ description = "OS integration for Murmur: microphone, global hotkeys, paste, fro
 murmur-core = { path = "../murmur-core", default-features = false }
 log.workspace = true
 thiserror.workspace = true
+serde.workspace = true
 cpal = "0.16"
 arboard = "3"
 

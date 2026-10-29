@@ -21,6 +21,8 @@ pub struct Overview {
     accessibility: bool,
     input_monitoring: bool,
     hotkey_error: Option<String>,
+    hotkey_status: murmur_sys::hotkey::HotkeyStatus,
+    default_input: Option<String>,
     devices: Vec<String>,
     platform: &'static str,
     version: &'static str,
@@ -38,6 +40,8 @@ pub fn overview(ctl: Ctl) -> Overview {
         accessibility: perms.accessibility,
         input_monitoring: perms.input_monitoring,
         hotkey_error: ctl.hotkey_error.lock().unwrap().clone(),
+        hotkey_status: ctl.hotkey_status(),
+        default_input: murmur_sys::capture::default_input_name(),
         devices: murmur_sys::capture::input_devices(),
         platform: std::env::consts::OS,
         version: env!("CARGO_PKG_VERSION"),
@@ -159,4 +163,74 @@ pub fn delete_model(ctl: Ctl, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn toggle_recording(ctl: Ctl) {
     ctl.inner().toggle();
+}
+
+#[derive(Serialize)]
+pub struct MicTest {
+    /// 0..1 meter peak.
+    level: f32,
+    /// Largest raw sample; 0 means the OS is handing us silence (blocked mic).
+    max_sample: f32,
+    device: Option<String>,
+}
+
+#[tauri::command]
+pub async fn test_microphone(ctl: Ctl<'_>) -> Result<MicTest, String> {
+    let c = ctl.inner().clone();
+    let device = {
+        let d = c.settings.read().unwrap().audio.device.clone();
+        if d.is_empty() { murmur_sys::capture::default_input_name() } else { Some(d) }
+    };
+    let (level, max_sample) = tauri::async_runtime::spawn_blocking(move || c.test_microphone())
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(MicTest { level, max_sample, device })
+}
+
+#[tauri::command]
+pub fn hotkey_status(ctl: Ctl) -> murmur_sys::hotkey::HotkeyStatus {
+    ctl.hotkey_status()
+}
+
+/// Open a System Settings privacy pane: "accessibility", "input_monitoring", "microphone".
+#[tauri::command]
+pub fn open_privacy(pane: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let anchor = match pane.as_str() {
+            "accessibility" => "Privacy_Accessibility",
+            "input_monitoring" => "Privacy_ListenEvent",
+            "microphone" => "Privacy_Microphone",
+            _ => return Err("unknown pane".into()),
+        };
+        std::process::Command::new("open")
+            .arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    if pane == "microphone" {
+        std::process::Command::new("cmd").args(["/C", "start", "ms-settings:privacy-microphone"]).spawn().map_err(|e| e.to_string())?;
+    }
+    let _ = pane;
+    Ok(())
+}
+
+/// macOS: forget Murmur's permission grants (they go stale when an unsigned
+/// build is replaced), then relaunch so it asks fresh.
+#[tauri::command]
+pub fn reset_permissions(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let id = app.config().identifier.clone();
+        for service in ["Accessibility", "ListenEvent", "Microphone"] {
+            let _ = std::process::Command::new("/usr/bin/tccutil").args(["reset", service, &id]).status();
+        }
+    }
+    app.restart();
+}
+
+#[tauri::command]
+pub fn relaunch(app: tauri::AppHandle) {
+    app.restart();
 }

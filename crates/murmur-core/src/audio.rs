@@ -83,6 +83,12 @@ pub fn trim_silence(samples: &[f32], rate: u32, threshold_dbfs: f32, pad_ms: u32
     &samples[start..end]
 }
 
+/// All-zero input: not a quiet room but a blocked or dead microphone (macOS
+/// hands apps without mic permission pure digital silence).
+pub fn is_digital_silence(samples: &[f32]) -> bool {
+    !samples.is_empty() && samples.iter().all(|s| s.abs() < 1e-6)
+}
+
 pub fn duration_ms(samples: usize, rate: u32) -> u64 {
     (samples as u64 * 1000) / rate.max(1) as u64
 }
@@ -167,6 +173,13 @@ mod tests {
         let t = trim_silence(&s, 16_000, -45.0, 100);
         let ms = duration_ms(t.len(), 16_000);
         assert!((680..=740).contains(&ms), "{ms}");
+    }
+
+    #[test]
+    fn digital_silence_vs_quiet_room() {
+        assert!(is_digital_silence(&[0.0; 1000]));
+        assert!(!is_digital_silence(&[0.0005; 1000]));
+        assert!(!is_digital_silence(&[]));
     }
 
     #[test]

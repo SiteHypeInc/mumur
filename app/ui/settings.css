@@ -90,3 +90,12 @@ body.macos .not-mac { display: none; }
 .bar { width: 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .1s; }
 .state-ok { color: var(--ok); font-size: 13px; }
+
+.diag { display: grid; gap: 10px; }
+.diag-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.live { font-size: 13px; color: var(--muted); padding: 6px 10px; border-radius: 8px; border: 1px dashed var(--line); transition: background .15s, color .15s; white-space: nowrap; }
+.live.hit { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.live.ok { color: var(--ok); border-style: solid; }
+.bar.mic { width: 160px; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: inherit; }
+.badge.wait { color: var(--warn); }

@@ -174,6 +174,11 @@ impl Default for Recorder {
     }
 }
 
+/// Name of the system's current default microphone.
+pub fn default_input_name() -> Option<String> {
+    cpal::default_host().default_input_device().and_then(|d| d.name().ok())
+}
+
 pub fn input_devices() -> Vec<String> {
     let host = cpal::default_host();
     host.input_devices()

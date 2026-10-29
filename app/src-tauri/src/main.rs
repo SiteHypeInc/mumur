@@ -54,6 +54,11 @@ fn main() {
             commands::set_paused,
             commands::toggle_recording,
             commands::models,
+            commands::test_microphone,
+            commands::hotkey_status,
+            commands::open_privacy,
+            commands::reset_permissions,
+            commands::relaunch,
             commands::download_model,
             commands::delete_model,
         ])

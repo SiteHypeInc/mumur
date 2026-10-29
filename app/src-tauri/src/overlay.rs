@@ -102,7 +102,3 @@ pub fn set(app: &AppHandle, state: PillState) {
 pub fn level(app: &AppHandle, level: f32) {
     let _ = app.emit_to(LABEL, "level", level);
 }
-
-pub fn sound(app: &AppHandle, kind: &'static str) {
-    let _ = app.emit_to(LABEL, "sound", kind);
-}

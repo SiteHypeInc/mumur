@@ -17,7 +17,7 @@ page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 await page.addInitScript((settings) => {
   window.__saved = [];
   const overview = { settings, keys: { groq: true, openai: false, anthropic: false, custom: false }, accessibility: true,
-    input_monitoring: false, hotkey_error: null, devices: ["MacBook Pro Microphone", "AirPods Pro"], platform: "macos",
+    input_monitoring: false, hotkey_error: null, hotkey_status: "waiting_for_permission", default_input: "AirPods Pro", devices: ["MacBook Pro Microphone", "AirPods Pro"], platform: "macos",
     version: "0.1.0", total_words: 12840, paused: false };
   const hist = [
     { id: 2, created_at: Date.now() - 60000, app: "Slack", category: "work", raw: "um so can you push it to git hub", text: "Can you push it to GitHub?", audio_ms: 2100, stt_ms: 310, polish_ms: 290 },
@@ -36,16 +36,22 @@ await page.addInitScript((settings) => {
         { id: "small.en", label: "Small (English)", size_mb: 466, speed: 3, accuracy: 3, english_only: true, note: "Balanced; solid accuracy on older Macs and PCs", downloaded: false },
         { id: "large-v3-turbo-q5", label: "Large v3 Turbo", size_mb: 547, speed: 3, accuracy: 5, english_only: false, note: "Best accuracy, 99 languages. Recommended on Apple Silicon", downloaded: false },
       ];
+      if (cmd === "hotkey_status") return "active";
+      if (cmd === "test_microphone") { await new Promise((r) => setTimeout(r, 200)); return { level: 0, max_sample: 0, device: "AirPods Pro" }; }
       if (cmd === "download_model") { await new Promise((r) => setTimeout(r, 300)); return null; }
       return null;
     } },
-    event: { listen: async () => () => {} },
+    event: { listen: async (name, cb) => { (window.__h ||= {})[name] = cb; return () => {}; } },
   };
 }, defaults);
 
 await page.goto("file://" + path.resolve(uiDir, "settings.html") + "#setup");
 await page.waitForSelector("#setup.active");
 await page.waitForSelector("#setup [data-use]");
+await page.click("#mic-test");
+await page.waitForFunction(() => document.querySelector("#mic-hint").textContent.includes("blocked"));
+await page.evaluate(() => { window.__h["hotkey-test"]({ payload: true }); window.__h["hotkey-test"]({ payload: false }); });
+await page.waitForFunction(() => document.querySelector("#hk-live").textContent.includes("works"));
 await page.screenshot({ path: `${outDir}/0-setup-free.png`, fullPage: true });
 await page.click('#setup input[data-use="base.en"]');
 await page.click('input[name="engine"][value="cloud"]');

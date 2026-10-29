@@ -7,6 +7,7 @@ pub mod hotkey;
 pub mod keys;
 pub mod paste;
 pub mod permissions;
+pub mod sound;
 
 #[cfg(target_os = "macos")]
 mod macos;
