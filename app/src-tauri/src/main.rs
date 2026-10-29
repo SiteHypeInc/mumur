@@ -5,6 +5,7 @@ mod commands;
 mod controller;
 mod local;
 mod overlay;
+mod perms;
 mod secrets;
 mod tray;
 
@@ -13,7 +14,15 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use controller::Controller;
 
+/// Murmur lives in the menu bar; it shows in the Dock only while its window is open.
+fn show_in_dock(app: &AppHandle, visible: bool) {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(if visible { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory });
+    let _ = (app, visible);
+}
+
 pub fn open_settings(app: &AppHandle, section: &str) {
+    show_in_dock(app, true);
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.eval(format!("window.showSection && window.showSection({section:?})"));
         let _ = w.show();
@@ -59,6 +68,7 @@ fn main() {
             commands::open_privacy,
             commands::reset_permissions,
             commands::relaunch,
+            commands::diagnostics,
             commands::download_model,
             commands::delete_model,
         ])
@@ -70,6 +80,7 @@ fn main() {
             let handle = app.handle().clone();
             let dir = app.path().app_config_dir()?;
             let data = app.path().app_data_dir()?;
+            perms::clear_stale_grants(&data, &app.config().identifier);
             let ctl = Controller::new(handle.clone(), dir.join("settings.toml"), data.join("history.sqlite3"), data.join("models"));
             app.manage(ctl.clone());
             overlay::create(&handle)?;
@@ -98,6 +109,7 @@ fn main() {
                 if window.label() == "settings" {
                     api.prevent_close();
                     let _ = window.hide();
+                    show_in_dock(window.app_handle(), false);
                 }
             }
         })

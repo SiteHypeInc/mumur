@@ -77,11 +77,13 @@ jobs:
       - name: Build installer
         shell: bash
         run: cd app && ../scripts/ci-run.sh npx -y @tauri-apps/cli@2 build ${{ matrix.args }}
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist
+          find target -path '*/release/bundle/*' \( -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} dist/ \;
+          ls -la dist
       - uses: actions/upload-artifact@v4
         with:
-          name: murmur-${{ matrix.os }}
-          path: |
-            target/**/release/bundle/dmg/*.dmg
-            target/**/release/bundle/macos/*.app
-            target/**/release/bundle/msi/*.msi
-            target/**/release/bundle/nsis/*.exe
+          name: Murmur-${{ runner.os }}-installer
+          path: dist/*

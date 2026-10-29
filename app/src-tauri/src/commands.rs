@@ -234,3 +234,25 @@ pub fn reset_permissions(app: tauri::AppHandle) -> Result<(), String> {
 pub fn relaunch(app: tauri::AppHandle) {
     app.restart();
 }
+
+/// Plain-text status report for support ("Copy diagnostics").
+#[tauri::command]
+pub fn diagnostics(ctl: Ctl) -> String {
+    let p = murmur_sys::permissions::status(false);
+    let s = ctl.settings.read().unwrap().clone();
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    [
+        format!("Murmur {} on {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH),
+        format!("app: {exe}"),
+        format!("hotkey: {} ({:?}), status {:?}, paused {}", s.hotkey.binding, s.hotkey.mode, ctl.hotkey_status(), ctl.paused.load(Ordering::SeqCst)),
+        format!("accessibility: {}, input monitoring: {}", p.accessibility, p.input_monitoring),
+        format!(
+            "mic: {} (default: {})",
+            if s.audio.device.is_empty() { "system default" } else { &s.audio.device },
+            murmur_sys::capture::default_input_name().unwrap_or_else(|| "none".into())
+        ),
+        format!("engine: {:?} {} · cleanup: {} {:?}", s.stt.provider, crate::local::LocalEngine::model_id(&s.stt.model), s.polish.enabled, s.polish.provider),
+        format!("model ready: {}", ctl.local.is_ready(crate::local::LocalEngine::model_id(&s.stt.model))),
+    ]
+    .join("\n")
+}

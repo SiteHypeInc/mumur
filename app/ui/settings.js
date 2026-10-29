@@ -123,8 +123,8 @@ function renderSetup() {
 const HK_TEXT = {
   active: ["✓ Ready", "yes", ""],
   listen_only: ["✓ Ready (basic)", "yes", "Works now. Allow Accessibility too so Murmur can paste and keep key combos from typing."],
-  waiting_for_permission: ["Waiting for permission", "wait",
-    "Turn Murmur on under Input Monitoring and Accessibility. It starts working within a couple of seconds; no restart needed."],
+  waiting_for_permission: ["Not allowed yet", "wait",
+    "Turn Murmur on under Input Monitoring and Accessibility; it starts working within a couple of seconds. Already ON? Those switches belong to an older copy: click Reset permissions & relaunch below, then allow again."],
 };
 function renderHotkeyStatus(st) {
   const [label, cls, hint] = HK_TEXT[st] || HK_TEXT.waiting_for_permission;
@@ -150,6 +150,11 @@ listen("hotkey-test", ({ payload: down }) => {
 });
 $$("[data-pane]").forEach((b) => (b.onclick = () => invoke("open_privacy", { pane: b.dataset.pane })));
 $("#relaunch").onclick = () => invoke("relaunch");
+$("#copy-diag").onclick = async () => {
+  const text = await invoke("diagnostics");
+  await invoke("copy_text", { text });
+  toast("Diagnostics copied. Paste them to us");
+};
 $("#reset-perms").onclick = () => {
   if (confirm("Reset Murmur's macOS permissions and relaunch? You'll be asked to allow them again.")) invoke("reset_permissions");
 };
