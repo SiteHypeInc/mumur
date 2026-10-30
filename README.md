@@ -55,6 +55,10 @@ Grab the latest build from **[Releases](../../releases)**: the `.dmg` for macOS 
 5. Under **Get started**, pick **Free & private** and download a model (Large v3 Turbo is recommended on Apple Silicon), or pick **Cloud** and paste your keys.
 6. Click into any text box and hold **Fn**.
 
+### Code signing (why permissions stick)
+
+macOS ties Accessibility, Input Monitoring and Microphone grants to an app's code signature. CI signs every macOS build with the same Murmur certificate (`scripts/macos-sign.sh`, using the `MURMUR_SIGNING_P12_BASE64` and `MURMUR_SIGNING_P12_PASSWORD` repository secrets), so **you grant permissions once and updates keep them**. It's a self-signed certificate, so macOS still asks you to confirm the first open (see above). An Apple Developer ID would remove that too. Forks without the secrets get ad-hoc builds that need re-granting after each update.
+
 ### Build from source
 
 Needs Rust (stable), CMake, and Node 18+ (only for the Tauri CLI; the UI has no build step).

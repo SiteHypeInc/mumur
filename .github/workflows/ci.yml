@@ -77,6 +77,13 @@ jobs:
       - name: Build installer
         shell: bash
         run: cd app && ../scripts/ci-run.sh npx -y @tauri-apps/cli@2 build ${{ matrix.args }}
+      - name: Sign with Murmur's stable certificate (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MURMUR_SIGNING_P12_BASE64: ${{ secrets.MURMUR_SIGNING_P12_BASE64 }}
+          MURMUR_SIGNING_P12_PASSWORD: ${{ secrets.MURMUR_SIGNING_P12_PASSWORD }}
+        run: scripts/ci-run.sh scripts/macos-sign.sh
       - name: Collect installers
         shell: bash
         run: |
