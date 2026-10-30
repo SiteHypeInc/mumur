@@ -5,8 +5,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const LABEL: &str = "overlay";
-const WIDTH: f64 = 236.0;
-const HEIGHT: f64 = 64.0;
+const WIDTH: f64 = 340.0;
+const HEIGHT: f64 = 84.0;
 const BOTTOM_MARGIN: f64 = 72.0;
 
 #[derive(Debug, Clone, Serialize)]

@@ -14,6 +14,9 @@ pub enum PasteError {
     Clipboard(String),
     #[error("could not send the paste keystroke: {0}")]
     Keystroke(String),
+    /// macOS drops synthetic keystrokes from apps without Accessibility, silently.
+    #[error("Murmur isn't allowed to type yet (Accessibility)")]
+    NotAllowed,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +54,12 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), PasteError> {
 pub fn insert_text(text: &str, opts: &InsertOptions) -> Result<(), PasteError> {
     if text.is_empty() {
         return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    if !crate::macos::accessibility_trusted(false) {
+        // Leave the text on the clipboard; the caller tells the user to press ⌘V.
+        copy_to_clipboard(text)?;
+        return Err(PasteError::NotAllowed);
     }
     let saved = if opts.restore_clipboard {
         with_clipboard(|cb| {

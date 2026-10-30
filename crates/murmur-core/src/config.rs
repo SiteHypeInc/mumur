@@ -197,6 +197,9 @@ pub struct Settings {
     pub audio: AudioSettings,
     /// Number of dictations kept in history; 0 disables history.
     pub history_limit: usize,
+    /// macOS: keep an icon in the Dock (otherwise only the menu bar, plus the
+    /// Dock while the window is open).
+    pub show_in_dock: bool,
 }
 
 impl Default for Settings {
@@ -212,6 +215,7 @@ impl Default for Settings {
             paste: PasteSettings::default(),
             audio: AudioSettings::default(),
             history_limit: 500,
+            show_in_dock: true,
         }
     }
 }

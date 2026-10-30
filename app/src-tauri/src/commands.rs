@@ -253,6 +253,42 @@ pub fn diagnostics(ctl: Ctl) -> String {
         ),
         format!("engine: {:?} {} · cleanup: {} {:?}", s.stt.provider, crate::local::LocalEngine::model_id(&s.stt.model), s.polish.enabled, s.polish.provider),
         format!("model ready: {}", ctl.local.is_ready(crate::local::LocalEngine::model_id(&s.stt.model))),
+        mac_signing_info(),
+        format!("--- recent log ({})", crate::logging::log_path().map(|p| p.display().to_string()).unwrap_or_default()),
+        crate::logging::tail(40),
     ]
     .join("\n")
+}
+
+/// How macOS sees this copy of the app: where it runs from (App Translocation
+/// shows up as a random /private/var path), its signature, and quarantine.
+fn mac_signing_info() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let Ok(exe) = std::env::current_exe() else { return String::new() };
+        let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app")).map(|p| p.to_path_buf());
+        let Some(bundle) = bundle else { return "bundle: not running from an .app".into() };
+        let run = |cmd: &str, args: &[&str]| {
+            std::process::Command::new(cmd)
+                .args(args)
+                .output()
+                .map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+                .unwrap_or_default()
+        };
+        let b = bundle.display().to_string();
+        let sig: Vec<String> = run("/usr/bin/codesign", &["-dv", &b])
+            .lines()
+            .filter(|l| l.starts_with("Identifier") || l.starts_with("CodeDirectory") || l.starts_with("Signature") || l.starts_with("TeamIdentifier"))
+            .map(str::to_owned)
+            .collect();
+        let quarantine = run("/usr/bin/xattr", &["-p", "com.apple.quarantine", &b]);
+        format!(
+            "bundle: {b}\ntranslocated: {}\nsignature: {}\nquarantine: {}",
+            b.contains("AppTranslocation"),
+            sig.join(" | "),
+            if quarantine.contains("No such xattr") || quarantine.trim().is_empty() { "none".into() } else { quarantine.trim().to_owned() }
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    String::new()
 }

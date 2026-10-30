@@ -150,6 +150,7 @@ impl Controller {
         let epoch = Instant::now();
         while let Ok(ev) = rx.recv() {
             // Lets the Get started screen show "✓ key detected" live.
+            log::info!("hotkey {ev:?}");
             if matches!(ev, HotkeyEvent::Pressed | HotkeyEvent::Released) {
                 let _ = self.app.emit("hotkey-test", ev == HotkeyEvent::Pressed);
             }
@@ -345,13 +346,28 @@ impl Controller {
         let pasted = tauri::async_runtime::spawn_blocking(move || paste::insert_text(&t, &opts)).await;
         if !matches!(pasted, Ok(Ok(()))) {
             let _ = paste::copy_to_clipboard(&text);
-            overlay::set(&self.app, PillState::Message { text: "Copied. Paste with ⌘V / Ctrl+V".into(), tone: "warn" });
-            self.hide_later(3000);
+            let msg = match &pasted {
+                Ok(Err(paste::PasteError::NotAllowed)) => {
+                    "Copied. Press ⌘V. (Allow Murmur under Accessibility to paste automatically)"
+                }
+                _ => "Copied. Paste with ⌘V / Ctrl+V",
+            };
+            log::warn!("paste failed: {pasted:?}");
+            overlay::set(&self.app, PillState::Message { text: msg.into(), tone: "warn" });
+            self.hide_later(4500);
         } else {
-            match &outcome.note {
+            let note = outcome.note.as_ref().map(|n| {
+                if settings.polish.provider == murmur_core::config::PolishProvider::Ollama && n.starts_with("Cleanup skipped") {
+                    "Ollama isn't installed or running, so basic cleanup was used. Get it at ollama.com or switch cleanup in Engines.".to_owned()
+                } else {
+                    n.clone()
+                }
+            });
+            match &note {
                 Some(note) => {
+                    log::warn!("{note}");
                     overlay::set(&self.app, PillState::Message { text: note.clone(), tone: "warn" });
-                    self.hide_later(2200);
+                    self.hide_later(4500);
                 }
                 None => {
                     let words = outcome.text.split_whitespace().count();

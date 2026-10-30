@@ -4,6 +4,7 @@
 mod commands;
 mod controller;
 mod local;
+mod logging;
 mod overlay;
 mod perms;
 mod secrets;
@@ -14,8 +15,11 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use controller::Controller;
 
-/// Murmur lives in the menu bar; it shows in the Dock only while its window is open.
-fn show_in_dock(app: &AppHandle, visible: bool) {
+/// Dock icon: always when the "Show in Dock" setting is on (the default),
+/// otherwise only while the Murmur window is open.
+fn show_in_dock(app: &AppHandle, window_open: bool) {
+    let always = app.try_state::<std::sync::Arc<Controller>>().is_none_or(|c| c.settings.read().unwrap().show_in_dock);
+    let visible = always || window_open;
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(if visible { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory });
     let _ = (app, visible);
@@ -46,7 +50,7 @@ pub fn open_settings(app: &AppHandle, section: &str) {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    logging::init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_settings(app, "general")))
@@ -73,10 +77,6 @@ fn main() {
             commands::delete_model,
         ])
         .setup(|app| {
-            // Menu-bar app: no Dock icon, no app switcher entry.
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
             let handle = app.handle().clone();
             let dir = app.path().app_config_dir()?;
             let data = app.path().app_data_dir()?;
@@ -100,6 +100,8 @@ fn main() {
             };
             if !configured || ctl.hotkey_error.lock().unwrap().is_some() {
                 open_settings(&handle, "setup");
+            } else {
+                show_in_dock(&handle, false);
             }
             Ok(())
         })
@@ -113,6 +115,14 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Murmur");
+        .build(tauri::generate_context!())
+        .expect("error while building Murmur")
+        .run(|app, event| {
+            // Clicking the Dock icon opens the Murmur window.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                open_settings(app, "general");
+            }
+            let _ = (app, event);
+        });
 }
