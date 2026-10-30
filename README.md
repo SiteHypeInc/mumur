@@ -35,8 +35,8 @@ Superwhisper, Wispr Flow and Glaido are good. But they're closed, mostly subscri
 - **Never lose text.** Every dictation goes into local history before it's pasted.
   - **Recent** (menu bar) lists the last 15. Click one to copy it.
   - **Paste last dictation** (`Ctrl+Alt+V`, `F9` on Linux) types it again wherever you are.
-- **Your clipboard survives.** Murmur puts your clipboard back after pasting, unless you copied something new in the meantime.
-- **Private.** Keys live in the OS keychain. History is a local SQLite file. Password fields are never read.
+- **Your clipboard survives, and never at your dictation's expense.** Murmur checks the clipboard really holds the transcript before pressing ⌘V. It puts your old clipboard back only once it sees the text land in the field (macOS). If it can't confirm the paste, the transcript stays on the clipboard so ⌘V still works.
+- **Private.** Keys live in the OS keychain. History is a local SQLite file you can auto-expire (1/7/30/90 days) or wipe with **Clear history**, which also shrinks the file on disk. Password fields are never read.
 
 ## Install
 
@@ -85,7 +85,7 @@ npx @tauri-apps/cli@2 build    # .app/.dmg on macOS, .msi/.exe on Windows
 | Engine | Cost | Notes |
 |---|---|---|
 | Built-in tidy-up | Free | Always on as a fallback: drops "um"/"uh" and stutters, fixes "i" → "I", capitalizes. Never touches code |
-| **Ollama** | Free | `ollama pull llama3.2`, pick Ollama in Settings → Engines |
+| **Ollama** | Free | Pick Ollama in Settings → Engines. It shows which models you have and downloads the one you chose in one click |
 | Anthropic | Paid (cents) | Claude Haiku 5.5 by default: the best cleanup for the money |
 | Groq / OpenAI / Custom | Varies | Any chat model |
 

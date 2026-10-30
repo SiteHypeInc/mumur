@@ -63,6 +63,8 @@ impl History {
         }
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // Deleted dictations are overwritten on disk, not just unlinked.
+        conn.pragma_update(None, "secure_delete", "ON")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -121,9 +123,29 @@ impl History {
         Ok(())
     }
 
+    /// Drop entries older than `days` (0 keeps everything). Returns how many went.
+    pub fn prune_older_than(&self, days: u32) -> Result<usize> {
+        if days == 0 {
+            return Ok(0);
+        }
+        let cutoff = now_ms() - i64::from(days) * 86_400_000;
+        Ok(self.conn.execute("DELETE FROM dictations WHERE created_at < ?1", params![cutoff])?)
+    }
+
+    /// Delete every entry and shrink the file, so nothing lingers on disk.
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM dictations", [])?;
+        self.compact()
+    }
+
+    /// Give freed pages back to the OS (VACUUM) and empty the write-ahead log.
+    pub fn compact(&self) -> Result<()> {
+        self.conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
+    }
+
+    pub fn count(&self) -> Result<i64> {
+        Ok(self.conn.query_row("SELECT COUNT(*) FROM dictations", [], |r| r.get(0))?)
     }
 
     /// Total words dictated, for the "you've saved N minutes of typing" stat.
@@ -161,5 +183,40 @@ mod tests {
         assert_eq!(h.total_words().unwrap(), 4);
         h.delete(all[0].id).unwrap();
         assert_eq!(h.list(None, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_deletes_rows_and_shrinks_the_file() {
+        let dir = std::env::temp_dir().join(format!("murmur-hist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("history.sqlite");
+        let h = History::open(&path).unwrap();
+        let big = "word ".repeat(2000);
+        for _ in 0..200 {
+            h.add(&entry(&big), 1000).unwrap();
+        }
+        h.compact().unwrap();
+        let full = std::fs::metadata(&path).unwrap().len();
+        h.clear().unwrap();
+        assert_eq!(h.count().unwrap(), 0);
+        assert!(h.list(None, 10).unwrap().is_empty());
+        let after = std::fs::metadata(&path).unwrap().len();
+        let wal = std::fs::metadata(dir.join("history.sqlite-wal")).map(|m| m.len()).unwrap_or(0);
+        assert!(after * 10 < full, "file should shrink: {full} -> {after}");
+        assert_eq!(wal, 0, "WAL should be truncated");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prunes_by_age() {
+        let h = History::in_memory().unwrap();
+        h.add(&entry("new"), 100).unwrap();
+        h.add(&entry("old"), 100).unwrap();
+        h.conn.execute("UPDATE dictations SET created_at = created_at - 10 * 86400000 WHERE text = 'old'", []).unwrap();
+        assert_eq!(h.prune_older_than(0).unwrap(), 0);
+        assert_eq!(h.prune_older_than(30).unwrap(), 0);
+        assert_eq!(h.prune_older_than(7).unwrap(), 1);
+        let left: Vec<_> = h.list(None, 10).unwrap().into_iter().map(|e| e.text).collect();
+        assert_eq!(left, ["new"]);
     }
 }

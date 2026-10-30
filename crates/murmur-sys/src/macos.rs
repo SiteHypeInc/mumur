@@ -35,6 +35,7 @@ extern "C" {
     fn AXUIElementCreateSystemWide() -> AXUIElementRef;
     fn AXUIElementCopyAttributeValue(element: AXUIElementRef, attribute: CFStringRef, value: *mut CFTypeRef) -> AXError;
     fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, seconds: f32) -> AXError;
+    fn AXUIElementSetAttributeValue(element: AXUIElementRef, attribute: CFStringRef, value: CFTypeRef) -> AXError;
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
     fn CFGetTypeID(cf: CFTypeRef) -> usize;
     fn CFStringGetTypeID() -> usize;
@@ -179,6 +180,17 @@ pub fn focused_text() -> (Option<String>, Option<String>) {
         return (None, None);
     }
     (string_attr(focused.0, "AXValue"), string_attr(focused.0, "AXSelectedText"))
+}
+
+/// Chrome and Electron apps (Grok, Slack, Cursor…) only build their
+/// Accessibility tree once asked. Without it we can't see whether a paste
+/// landed in their text fields.
+pub fn enable_app_accessibility(pid: i32) {
+    let element = unsafe { AXUIElementCreateApplication(pid) };
+    let _guard = Owned(element);
+    unsafe { AXUIElementSetMessagingTimeout(element, 0.25) };
+    let attr = CFString::new("AXManualAccessibility");
+    unsafe { AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), CFBoolean::true_value().as_CFTypeRef()) };
 }
 
 // ---- Synthetic keystrokes ----------------------------------------------------

@@ -77,6 +77,7 @@ function bindAll() {
       set(path, val);
       if (path === "hotkey.binding") syncBinding();
       if (path === "stt.provider") syncEngineViews();
+      if (path.startsWith("polish.")) syncOllama();
       save(el.tagName === "SELECT" || el.type === "checkbox");
     };
   });
@@ -155,9 +156,26 @@ $("#copy-diag").onclick = async () => {
   await invoke("copy_text", { text });
   toast("Diagnostics copied. Paste them to us");
 };
-$("#reset-perms").onclick = () => {
-  if (confirm("Reset Murmur's macOS permissions and relaunch? You'll be asked to allow them again.")) invoke("reset_permissions");
-};
+// The macOS web view ignores window.confirm(), so destructive buttons ask
+// in place: the first click arms them, a second click within 4 s acts.
+function confirmClick(btn, prompt, action) {
+  btn.onclick = async () => {
+    if (btn.dataset.armed) {
+      clearTimeout(btn._disarm);
+      delete btn.dataset.armed;
+      btn.textContent = btn._label;
+      return action();
+    }
+    btn._label = btn.textContent;
+    btn.dataset.armed = "1";
+    btn.textContent = prompt;
+    btn._disarm = setTimeout(() => {
+      delete btn.dataset.armed;
+      btn.textContent = btn._label;
+    }, 4000);
+  };
+}
+confirmClick($("#reset-perms"), "Sure? You'll allow them again. Click to confirm", () => invoke("reset_permissions"));
 $("#mic-test").onclick = async () => {
   const btn = $("#mic-test"), hint = $("#mic-hint"), bar = $("#mic-bar");
   btn.disabled = true;
@@ -232,8 +250,7 @@ function renderModels() {
   $$("[data-models]").forEach((el) => {
     el.innerHTML = html;
     $$("[data-download]", el).forEach((b) => (b.onclick = () => download(b.dataset.download)));
-    $$("[data-delete]", el).forEach((b) => (b.onclick = async () => {
-      if (!confirm("Delete this model from disk?")) return;
+    $$("[data-delete]", el).forEach((b) => confirmClick(b, "Delete?", async () => {
       await invoke("delete_model", { id: b.dataset.delete });
       loadModels();
     }));
@@ -287,6 +304,50 @@ $$('input[name="engine"]').forEach((r) => (r.onchange = () => {
   syncEngineViews();
   save(true);
 }));
+
+// ---- Ollama: show which models are installed, offer to download the chosen one ----
+let ollamaTimer;
+function syncOllama() {
+  const on = s.polish.provider === "ollama";
+  $$(".when-ollama").forEach((x) => (x.style.display = on ? "" : "none"));
+  $("#polish-model").placeholder = on ? "llama3.2" : "claude-haiku-5-5";
+  if (!on) return;
+  clearTimeout(ollamaTimer);
+  ollamaTimer = setTimeout(checkOllama, 500);
+}
+async function checkOllama() {
+  const status = $("#ollama-status"), pull = $("#ollama-pull");
+  const want = (s.polish.model || "llama3.2").trim();
+  const bare = (m) => m.replace(/:latest$/, "");
+  try {
+    const have = await invoke("ollama_models");
+    $("#ollama-models").innerHTML = have.map((m) => `<option value="${esc(bare(m))}">`).join("");
+    const ok = have.some((m) => bare(m) === bare(want));
+    status.className = ok ? "hint ok" : "hint warn";
+    status.textContent = ok
+      ? `"${want}" is installed ✓`
+      : `Model not found: "${want}". ${have.length ? "Installed: " + have.map(bare).join(", ") : "No models installed yet"}`;
+    pull.style.display = ok ? "none" : "";
+  } catch (e) {
+    status.className = "hint warn";
+    status.textContent = "Ollama isn't running. Install it from ollama.com and open it.";
+    pull.style.display = "none";
+  }
+}
+$("#ollama-pull").onclick = async () => {
+  const btn = $("#ollama-pull"), status = $("#ollama-status");
+  btn.disabled = true;
+  status.className = "hint";
+  status.textContent = "Downloading… (a few minutes for a 2 GB model)";
+  try {
+    const model = await invoke("ollama_pull");
+    toast(`${model} is ready`);
+  } catch (e) {
+    toast(`Download failed: ${e}`);
+  }
+  btn.disabled = false;
+  checkOllama();
+};
 
 // ---- styles ----
 function renderStyles() {
@@ -413,11 +474,15 @@ $("#hist-q").oninput = () => {
   clearTimeout(histTimer);
   histTimer = setTimeout(loadHistory, 200);
 };
-$("#hist-clear").onclick = async () => {
-  if (!confirm("Delete all dictation history?")) return;
-  await invoke("delete_history", { id: null });
+confirmClick($("#hist-clear"), "Delete everything? Click again", async () => {
+  try {
+    await invoke("delete_history", { id: null });
+    toast("History cleared");
+  } catch (e) {
+    toast(`Couldn't clear history: ${e}`);
+  }
   loadHistory();
-};
+});
 listen("dictation", () => $("#history").classList.contains("active") && loadHistory());
 listen("learned", async () => {
   state = await invoke("overview");
@@ -457,6 +522,7 @@ async function initAutostart() {
   renderDictionary();
   initAutostart();
   syncEngineViews();
+  syncOllama();
   loadModels();
   showSection(location.hash.slice(1) || "general");
 })();

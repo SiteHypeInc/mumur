@@ -62,6 +62,8 @@ fn main() {
             commands::test_connection,
             commands::history,
             commands::delete_history,
+            commands::ollama_models,
+            commands::ollama_pull,
             commands::copy_text,
             commands::request_permissions,
             commands::set_paused,

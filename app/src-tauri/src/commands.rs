@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use murmur_core::config::{PolishProvider, Settings, SttProvider};
 use murmur_core::history::Entry;
-use murmur_core::providers::check;
+use murmur_core::providers::{check, ollama};
 use serde::Serialize;
 use tauri::State;
 
@@ -97,12 +97,55 @@ pub async fn test_connection(ctl: Ctl<'_>) -> Result<String, String> {
             }
         }
         .map_err(|e| match pp {
-            PolishProvider::Ollama => "Ollama isn't running. Install it from ollama.com, then run: ollama pull llama3.2".to_owned(),
+            PolishProvider::Ollama => "Ollama isn't running. Install it from ollama.com and open it".to_owned(),
             _ => e.user_message(),
         })?;
+        if pp == PolishProvider::Ollama {
+            let model = polish_model(&s);
+            let have = ollama::installed(&base).await.map_err(|e| e.user_message())?;
+            if !ollama::has_model(&have, &model) {
+                let list = if have.is_empty() { "none".to_owned() } else { have.join(", ") };
+                return Err(format!("Ollama model not found: \"{model}\" (installed: {list}). Click Download, or run: ollama pull {model}"));
+            }
+            *ctl.cleanup_down.lock().unwrap() = None;
+        }
         report.push(format!("Cleanup: {} ✓", pp.label()));
     }
     Ok(report.join(" · "))
+}
+
+fn polish_model(s: &Settings) -> String {
+    let m = s.polish.model.trim();
+    if m.is_empty() { s.polish.provider.default_model().to_owned() } else { m.to_owned() }
+}
+
+fn ollama_base(s: &Settings) -> String {
+    let b = s.polish.base_url.trim();
+    if b.is_empty() { PolishProvider::Ollama.default_base_url().to_owned() } else { b.to_owned() }
+}
+
+/// Models installed in Ollama, for the Engines model picker.
+#[tauri::command]
+pub async fn ollama_models(ctl: Ctl<'_>) -> Result<Vec<String>, String> {
+    let base = ollama_base(&ctl.settings.read().unwrap());
+    ollama::installed(&base).await.map_err(|_| "Ollama isn't running".to_owned())
+}
+
+/// Download the configured cleanup model into Ollama.
+#[tauri::command]
+pub async fn ollama_pull(ctl: Ctl<'_>) -> Result<String, String> {
+    let (base, model) = {
+        let s = ctl.settings.read().unwrap();
+        (ollama_base(&s), polish_model(&s))
+    };
+    log::info!("ollama: pulling {model}");
+    ollama::pull(&base, &model).await.map_err(|e| match e {
+        murmur_core::Error::Network(_) => "Ollama isn't running. Open the Ollama app first".to_owned(),
+        e => e.to_string(),
+    })?;
+    log::info!("ollama: {model} ready");
+    *ctl.cleanup_down.lock().unwrap() = None;
+    Ok(model)
 }
 
 #[tauri::command]
@@ -122,9 +165,20 @@ pub fn delete_history(ctl: Ctl, id: Option<i64>) -> Result<(), String> {
     let Some(h) = guard.as_ref() else { return Ok(()) };
     match id {
         Some(id) => h.delete(id),
-        None => h.clear(),
+        None => {
+            let n = h.count().unwrap_or(0);
+            let r = h.clear();
+            log::info!("history: cleared {n} dictations ({})", if r.is_ok() { "file compacted" } else { "failed" });
+            r
+        }
     }
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    drop(guard);
+    if id.is_none() {
+        *ctl.last_text.lock().unwrap() = None;
+        crate::tray::refresh(&ctl.app);
+    }
+    Ok(())
 }
 
 #[tauri::command]

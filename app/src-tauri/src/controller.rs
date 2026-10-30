@@ -52,8 +52,15 @@ pub struct Controller {
     pub hotkey_error: Mutex<Option<String>>,
     pub local: crate::local::LocalEngine,
     /// Most recent dictation, kept even when history is off.
-    last_text: Mutex<Option<String>>,
+    pub last_text: Mutex<Option<String>>,
+    /// Ollama cleanup can't work right now (model missing, server down): why,
+    /// and when we found out. Skips the doomed request so dictations don't
+    /// wait on it. Cleared when settings change or a model is pulled.
+    pub cleanup_down: Mutex<Option<(String, Instant)>>,
 }
+
+/// How long to skip Ollama cleanup after it failed, before trying again.
+const CLEANUP_RETRY: Duration = Duration::from_secs(180);
 
 #[derive(Clone, Serialize)]
 pub struct DictationEvent {
@@ -73,6 +80,9 @@ impl Controller {
             Settings::default()
         });
         let history = History::open(&history_path).map_err(|e| log::error!("history unavailable: {e}")).ok();
+        if let Some(h) = history.as_ref() {
+            prune_history(h, &settings);
+        }
         let machine = HotkeyMachine::new(settings.hotkey.mode, settings.hotkey.hold_threshold_ms);
         Arc::new(Self {
             app,
@@ -88,6 +98,7 @@ impl Controller {
             hotkey_error: Mutex::new(None),
             local: crate::local::LocalEngine::new(models_dir),
             last_text: Mutex::new(None),
+            cleanup_down: Mutex::new(None),
         })
     }
 
@@ -138,8 +149,9 @@ impl Controller {
         }
         *self.machine.lock().unwrap() = HotkeyMachine::new(new.hotkey.mode, new.hotkey.hold_threshold_ms);
         if let Some(h) = self.history.lock().unwrap().as_ref() {
-            let _ = h.prune(new.history_limit);
+            prune_history(h, &new);
         }
+        *self.cleanup_down.lock().unwrap() = None;
         let _ = self.app.emit("settings-changed", &new);
         *self.settings.write().unwrap() = new;
         self.prewarm();
@@ -286,7 +298,13 @@ impl Controller {
     }
 
     async fn process(self: Arc<Self>, samples: Vec<f32>, snap: Snapshot) {
-        let settings = self.settings.read().unwrap().clone();
+        let mut settings = self.settings.read().unwrap().clone();
+        if let Some((why, at)) = self.cleanup_down.lock().unwrap().as_ref() {
+            if settings.polish.enabled && at.elapsed() < CLEANUP_RETRY {
+                log::info!("cleanup skipped: {why} (found {} s ago; basic cleanup used)", at.elapsed().as_secs());
+                settings.polish.enabled = false;
+            }
+        }
         let stt_key = secrets::get(secrets::stt_key_name(settings.stt.provider));
         let polish_key = secrets::get(secrets::polish_key_name(settings.polish.provider));
         let transcriber = if settings.stt.provider == SttProvider::Local {
@@ -341,6 +359,8 @@ impl Controller {
             restore_clipboard: settings.paste.restore_clipboard,
             restore_delay: Duration::from_millis(settings.paste.restore_delay_ms),
             send_key: outcome.resolved.send_key,
+            target_app: snap.target.context.app_name.clone().unwrap_or_default(),
+            target_pid: snap.target.pid,
         };
         let t = text.clone();
         let pasted = tauri::async_runtime::spawn_blocking(move || paste::insert_text(&t, &opts)).await;
@@ -356,12 +376,12 @@ impl Controller {
             overlay::set(&self.app, PillState::Message { text: msg.into(), tone: "warn" });
             self.hide_later(4500);
         } else {
-            let note = outcome.note.as_ref().map(|n| {
-                if settings.polish.provider == murmur_core::config::PolishProvider::Ollama && n.starts_with("Cleanup skipped") {
-                    "Ollama isn't installed or running, so basic cleanup was used. Get it at ollama.com or switch cleanup in Engines.".to_owned()
-                } else {
-                    n.clone()
+            let note = outcome.note.as_deref().map(|n| match ollama_problem(&settings, n) {
+                Some(why) => {
+                    *self.cleanup_down.lock().unwrap() = Some((why.clone(), Instant::now()));
+                    why
                 }
+                None => n.to_owned(),
             });
             match &note {
                 Some(note) => {
@@ -399,6 +419,7 @@ impl Controller {
                     },
                     settings.history_limit,
                 );
+                let _ = h.prune_older_than(settings.history_days);
             }
         }
         crate::tray::refresh(&self.app);
@@ -510,6 +531,13 @@ impl Controller {
                 restore_clipboard: s.paste.restore_clipboard,
                 restore_delay: Duration::from_millis(s.paste.restore_delay_ms),
                 send_key: None,
+                ..Default::default()
+            };
+            let target = frontmost::target();
+            let opts = InsertOptions {
+                target_app: target.context.app_name.unwrap_or_default(),
+                target_pid: target.pid,
+                ..opts
             };
             if let Err(e) = paste::insert_text(&text, &opts) {
                 let _ = paste::copy_to_clipboard(&text);
@@ -539,4 +567,31 @@ impl Controller {
 fn tail(s: &str, max_chars: usize) -> String {
     let n = s.chars().count();
     s.chars().skip(n.saturating_sub(max_chars)).collect()
+}
+
+/// Apply the history limits; compact the file when that freed anything.
+fn prune_history(h: &History, s: &Settings) {
+    let before = h.count().unwrap_or(0);
+    let _ = h.prune(s.history_limit);
+    let _ = h.prune_older_than(s.history_days);
+    let removed = before - h.count().unwrap_or(before);
+    if removed > 0 {
+        log::info!("history: removed {removed} old dictations");
+        let _ = h.compact();
+    }
+}
+
+/// Turn a failed Ollama cleanup into what actually went wrong and how to fix it.
+fn ollama_problem(s: &Settings, note: &str) -> Option<String> {
+    if s.polish.provider != murmur_core::config::PolishProvider::Ollama || !note.starts_with("Cleanup skipped") {
+        return None;
+    }
+    let model = if s.polish.model.trim().is_empty() { s.polish.provider.default_model() } else { s.polish.model.trim() };
+    Some(if note.contains("model not found") {
+        format!("Ollama model not found: \"{model}\". Run `ollama pull {model}` or download it in Settings → Engines. Basic cleanup used.")
+    } else if note.contains("No connection") {
+        "Ollama isn't running (open the Ollama app, or switch cleanup in Engines). Basic cleanup used.".to_owned()
+    } else {
+        format!("{note}. Basic cleanup used.")
+    })
 }

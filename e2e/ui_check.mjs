@@ -37,6 +37,9 @@ await page.addInitScript((settings) => {
         { id: "large-v3-turbo-q5", label: "Large v3 Turbo", size_mb: 547, speed: 3, accuracy: 5, english_only: false, note: "Best accuracy, 99 languages. Recommended on Apple Silicon", downloaded: false },
       ];
       if (cmd === "hotkey_status") return "active";
+      if (cmd === "ollama_models") return ["qwen2.5:7b"];
+      if (cmd === "ollama_pull") { window.__pulled = true; return "llama3.2"; }
+      if (cmd === "delete_history") { (window.__deleted ||= []).push(args.id); if (args.id === null) hist.length = 0; return null; }
       if (cmd === "test_microphone") { await new Promise((r) => setTimeout(r, 200)); return { level: 0, max_sample: 0, device: "AirPods Pro" }; }
       if (cmd === "download_model") { await new Promise((r) => setTimeout(r, 300)); return null; }
       return null;
@@ -69,6 +72,9 @@ await page.click('nav a[data-s="engines"]');
 await page.selectOption('select[data-bind="stt.provider"]', "open_ai");
 await page.selectOption('select[data-bind="stt.provider"]', "local");
 await page.selectOption('select[data-bind="polish.provider"]', "ollama");
+await page.waitForFunction(() => document.querySelector("#ollama-status").textContent.includes('Model not found: "llama3.2"'));
+await page.click("#ollama-pull");
+await page.waitForFunction(() => window.__pulled === true);
 await page.screenshot({ path: `${outDir}/3-engines-local.png`, fullPage: true });
 await page.selectOption('select[data-bind="stt.provider"]', "groq");
 await page.screenshot({ path: `${outDir}/3-engines.png` });
@@ -105,6 +111,16 @@ await page.waitForSelector("#hist li p");
 await page.screenshot({ path: `${outDir}/7-history.png` });
 await page.fill("#hist-q", "github");
 await page.waitForFunction(() => document.querySelectorAll("#hist li").length === 1);
+// Clear needs a second click: the first only arms it.
+await page.fill("#hist-q", "");
+await page.click("#hist-clear");
+if (await page.evaluate(() => window.__deleted)) errors.push("history cleared on the first click");
+await page.screenshot({ path: `${outDir}/7-history-confirm.png` });
+await page.click("#hist-clear");
+await page.waitForFunction(() => (window.__deleted || []).includes(null));
+await page.waitForFunction(() => document.querySelectorAll("#hist li p").length === 0);
+await page.click('nav a[data-s="general"]');
+await page.selectOption('select[data-bind="history_days"]', "30");
 
 await page.emulateMedia({ colorScheme: "dark" });
 await page.click('nav a[data-s="modes"]');

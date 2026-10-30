@@ -197,6 +197,8 @@ pub struct Settings {
     pub audio: AudioSettings,
     /// Number of dictations kept in history; 0 disables history.
     pub history_limit: usize,
+    /// Delete dictations older than this many days; 0 keeps them until the limit.
+    pub history_days: u32,
     /// macOS: keep an icon in the Dock (otherwise only the menu bar, plus the
     /// Dock while the window is open).
     pub show_in_dock: bool,
@@ -215,6 +217,7 @@ impl Default for Settings {
             paste: PasteSettings::default(),
             audio: AudioSettings::default(),
             history_limit: 500,
+            history_days: 0,
             show_in_dock: true,
         }
     }
