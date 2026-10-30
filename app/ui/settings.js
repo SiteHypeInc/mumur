@@ -381,7 +381,7 @@ function addTerm() {
   save(true);
 }
 $("#add-term").onclick = addTerm;
-$("#new-term").onkeydown = (e) => e.key === "Enter" && addTerm();
+$("#new-term").onkeydown = (e) => { if (e.key === "Enter") addTerm(); };
 $("#add-rep").onclick = () => {
   s.dictionary.replacements.push({ from: "", to: "" });
   renderDictionary();
