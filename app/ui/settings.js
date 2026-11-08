@@ -115,6 +115,8 @@ function renderSetup() {
         inp.placeholder = state.keys[inp.dataset.key] ? "•••••••• saved" : "";
         toast(state.keys[inp.dataset.key] ? "Key saved to keychain" : "Key removed");
         syncCleanup();
+        sttModelsFor = null;
+        syncSttModels();
       } catch (e) {
         toast(String(e));
       }
@@ -299,7 +301,57 @@ function clearLocalModel() {
     if (have.length && !have.some((m) => m.id === DEFAULT_MODEL)) s.stt.model = have.at(-1).id;
   }
 }
+// Cloud speech models: a dropdown filled from the provider's live model list,
+// so new models (Groq adds them now and then) show up without an update.
+const STT_DEFAULT = { groq: "whisper-large-v3-turbo", open_ai: "whisper-1" };
+const STT_LABELS = {
+  "whisper-large-v3-turbo": "Whisper Large v3 Turbo · fastest",
+  "whisper-large-v3": "Whisper Large v3 · most accurate, a bit slower",
+  "whisper-1": "Whisper",
+  "gpt-4o-transcribe": "GPT-4o Transcribe · most accurate",
+  "gpt-4o-mini-transcribe": "GPT-4o mini Transcribe · cheaper",
+};
+let sttModelsFor = null;
+async function syncSttModels() {
+  const p = s.stt.provider, def = STT_DEFAULT[p];
+  const pick = $("#stt-model-pick"), typed = $("#stt-model-typed"), sel = $("#stt-model-select");
+  $("#stt-url").style.display = p === "custom" ? "" : "none";
+  if (!def) {
+    pick.style.display = "none";
+    typed.style.display = "";
+    return;
+  }
+  pick.style.display = "";
+  if (sttModelsFor !== p) {
+    sttModelsFor = p;
+    sel.innerHTML = `<option value="">${esc(STT_LABELS[def] || def)} (default)</option>`;
+    const ids = (await invoke("stt_models", { provider: p })) || [];
+    if (s.stt.provider !== p) return;
+    sel.innerHTML =
+      `<option value="">${esc(STT_LABELS[def] || def)} (default)</option>` +
+      ids.filter((id) => id !== def).map((id) => `<option value="${esc(id)}">${esc(STT_LABELS[id] || id)}</option>`).join("") +
+      `<option value="__other">Other… (type a model name)</option>`;
+  }
+  const m = s.stt.model || "";
+  const listed = [...sel.options].some((o) => o.value === m && o.value !== "__other");
+  sel.value = m === def ? "" : listed ? m : "__other";
+  typed.style.display = sel.value === "__other" ? "" : "none";
+}
+$("#stt-model-select").onchange = (e) => {
+  const v = e.target.value;
+  if (v === "__other") {
+    $("#stt-model-typed").style.display = "";
+    $("#stt-model-input").focus();
+    return;
+  }
+  s.stt.model = v;
+  $("#stt-model-input").value = v;
+  $("#stt-model-typed").style.display = "none";
+  save(true);
+};
+
 function syncEngineViews() {
+  syncSttModels();
   const local = s.stt.provider === "local";
   $$(".when-local").forEach((x) => (x.style.display = local ? "" : "none"));
   $$(".when-cloud").forEach((x) => (x.style.display = local ? "none" : ""));

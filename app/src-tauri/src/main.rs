@@ -65,6 +65,7 @@ fn main() {
             commands::ollama_models,
             commands::ollama_pull,
             commands::open_url,
+            commands::stt_models,
             commands::copy_text,
             commands::request_permissions,
             commands::set_paused,

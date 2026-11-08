@@ -124,6 +124,27 @@ fn ollama_base(s: &Settings) -> String {
     if b.is_empty() { PolishProvider::Ollama.default_base_url().to_owned() } else { b.to_owned() }
 }
 
+/// Speech models the selected cloud engine offers right now, for the Engines
+/// dropdown. Falls back to the ones we know when the server can't be asked.
+#[tauri::command]
+pub async fn stt_models(ctl: Ctl<'_>, provider: SttProvider) -> Result<Vec<String>, String> {
+    let known: &[&str] = match provider {
+        SttProvider::Groq => &["whisper-large-v3-turbo", "whisper-large-v3"],
+        SttProvider::OpenAi => &["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+        _ => &[],
+    };
+    let base = {
+        let s = ctl.settings.read().unwrap();
+        let b = s.stt.base_url.trim();
+        if b.is_empty() || s.stt.provider != provider { provider.default_base_url().to_owned() } else { b.to_owned() }
+    };
+    let key = secrets::get(secrets::stt_key_name(provider));
+    let live = check::speech_models(provider.label(), &base, key.as_deref()).await.unwrap_or_default();
+    let mut ids: Vec<String> = known.iter().map(|s| s.to_string()).collect();
+    ids.extend(live.into_iter().filter(|m| !known.contains(&m.as_str())));
+    Ok(ids)
+}
+
 /// Models installed in Ollama, for the Engines model picker.
 #[tauri::command]
 pub async fn ollama_models(ctl: Ctl<'_>) -> Result<Vec<String>, String> {

@@ -38,6 +38,7 @@ await page.addInitScript((settings) => {
       ];
       if (cmd === "hotkey_status") return "active";
       if (cmd === "ollama_models") return ["qwen2.5:7b"];
+      if (cmd === "stt_models") return args.provider === "groq" ? ["whisper-large-v3-turbo", "whisper-large-v3", "whisper-next-preview"] : ["whisper-1"];
       if (cmd === "open_url") { (window.__opened ||= []).push(args.url); return null; }
       if (cmd === "ollama_pull") { window.__pulled = true; return "llama3.2"; }
       if (cmd === "delete_history") { (window.__deleted ||= []).push(args.id); if (args.id === null) hist.length = 0; return null; }
@@ -87,6 +88,13 @@ await page.selectOption('select[data-bind="stt.provider"]', "local");
 await page.evaluate(() => { s.stt.model = "small.en"; });
 await page.selectOption('select[data-bind="stt.provider"]', "groq");
 if (await page.evaluate(() => s.stt.model) !== "") errors.push("on-device model name kept for Groq");
+await page.waitForFunction(() => [...document.querySelectorAll("#stt-model-select option")].some((o) => o.value === "whisper-next-preview"));
+if (await page.evaluate(() => getComputedStyle(document.querySelector("#stt-model-typed")).display !== "none")) errors.push("typed model box shown with default model");
+await page.selectOption("#stt-model-select", "whisper-large-v3");
+if (await page.evaluate(() => s.stt.model) !== "whisper-large-v3") errors.push("model pick not saved");
+await page.locator("#stt-model-pick").scrollIntoViewIfNeeded();
+await page.screenshot({ path: `${outDir}/3-engines-groq-models.png` });
+await page.selectOption("#stt-model-select", "");
 await page.screenshot({ path: `${outDir}/3-engines.png` });
 
 await page.click('nav a[data-s="styles"]');
