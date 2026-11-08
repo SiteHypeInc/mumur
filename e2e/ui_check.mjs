@@ -38,6 +38,7 @@ await page.addInitScript((settings) => {
       ];
       if (cmd === "hotkey_status") return "active";
       if (cmd === "ollama_models") return ["qwen2.5:7b"];
+      if (cmd === "open_url") { (window.__opened ||= []).push(args.url); return null; }
       if (cmd === "ollama_pull") { window.__pulled = true; return "llama3.2"; }
       if (cmd === "delete_history") { (window.__deleted ||= []).push(args.id); if (args.id === null) hist.length = 0; return null; }
       if (cmd === "test_microphone") { await new Promise((r) => setTimeout(r, 200)); return { level: 0, max_sample: 0, device: "AirPods Pro" }; }
@@ -71,7 +72,13 @@ await page.screenshot({ path: `${outDir}/2-general.png` });
 await page.click('nav a[data-s="engines"]');
 await page.selectOption('select[data-bind="stt.provider"]', "open_ai");
 await page.selectOption('select[data-bind="stt.provider"]', "local");
+await page.selectOption('select[data-bind="polish.provider"]', "anthropic");
+await page.waitForFunction(() => document.querySelector("#polish-key-hint").textContent.includes("Add a key") && getComputedStyle(document.querySelector(".when-polish-key")).display !== "none");
+await page.screenshot({ path: `${outDir}/3-engines-anthropic.png`, fullPage: true });
+await page.click("#polish-key-link");
+if (!(await page.evaluate(() => (window.__opened || []).includes("https://console.anthropic.com/settings/keys")))) errors.push("get key link did not open");
 await page.selectOption('select[data-bind="polish.provider"]', "ollama");
+if (await page.evaluate(() => getComputedStyle(document.querySelector(".when-polish-key")).display !== "none")) errors.push("key field shown for Ollama");
 await page.waitForFunction(() => document.querySelector("#ollama-status").textContent.includes('Model not found: "llama3.2"'));
 await page.click("#ollama-pull");
 await page.waitForFunction(() => window.__pulled === true);

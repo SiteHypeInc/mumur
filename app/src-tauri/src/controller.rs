@@ -318,7 +318,11 @@ impl Controller {
                 Err(e) => return self.fail(&e.user_message()),
             }
         };
-        let engine = Engine { transcriber, polisher: settings.build_polisher(polish_key) };
+        let polisher = settings.build_polisher(polish_key);
+        if settings.polish.enabled && polisher.is_none() {
+            log::warn!("cleanup: no {} API key saved; using basic tidy-up", settings.polish.provider.label());
+        }
+        let engine = Engine { transcriber, polisher };
         log::info!("captured {} samples, {:.1} dBFS", samples.len(), murmur_core::audio::rms_dbfs(&samples));
         if murmur_core::audio::is_digital_silence(&samples) {
             return self.fail(if cfg!(target_os = "macos") {

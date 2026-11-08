@@ -158,6 +158,10 @@
           <option value="custom">Custom server (LM Studio, llama.cpp)</option>
         </select>
       </label>
+      <label class="field when-polish-key"><span>API key <a id="polish-key-link" target="_blank"></a></span>
+        <input type="password" id="polish-key" data-key="anthropic" autocomplete="off" />
+      </label>
+      <p class="hint" id="polish-key-hint"></p>
       <label class="field">Model <span class="opt">blank = default</span><input data-bind="polish.model" id="polish-model" list="ollama-models" placeholder="claude-haiku-5-5" /></label>
       <datalist id="ollama-models"></datalist>
       <div class="row when-ollama"><span class="hint" id="ollama-status"></span><span class="sp"></span><button id="ollama-pull">Download model</button></div>

@@ -77,7 +77,7 @@ function bindAll() {
       set(path, val);
       if (path === "hotkey.binding") syncBinding();
       if (path === "stt.provider") syncEngineViews();
-      if (path.startsWith("polish.")) syncOllama();
+      if (path.startsWith("polish.")) syncCleanup();
       save(el.tagName === "SELECT" || el.type === "checkbox");
     };
   });
@@ -114,6 +114,7 @@ function renderSetup() {
         inp.classList.toggle("saved", state.keys[inp.dataset.key]);
         inp.placeholder = state.keys[inp.dataset.key] ? "•••••••• saved" : "";
         toast(state.keys[inp.dataset.key] ? "Key saved to keychain" : "Key removed");
+        syncCleanup();
       } catch (e) {
         toast(String(e));
       }
@@ -306,6 +307,35 @@ $$('input[name="engine"]').forEach((r) => (r.onchange = () => {
 }));
 
 // ---- Ollama: show which models are installed, offer to download the chosen one ----
+// The cleanup key lives next to the provider: it's needed whichever speech
+// engine is picked, the on-device one included.
+const POLISH_KEYS = {
+  anthropic: ["anthropic", "sk-ant-…", "https://console.anthropic.com/settings/keys"],
+  groq: ["groq", "gsk_…", "https://console.groq.com/keys"],
+  open_ai: ["openai", "sk-…", "https://platform.openai.com/api-keys"],
+  custom: ["custom", "Bearer token, if any", ""],
+};
+function syncCleanup() {
+  const k = POLISH_KEYS[s.polish.provider];
+  $$(".when-polish-key").forEach((x) => (x.style.display = k ? "" : "none"));
+  const hint = $("#polish-key-hint");
+  hint.textContent = "";
+  if (k) {
+    const [name, ph, url] = k;
+    const inp = $("#polish-key"), link = $("#polish-key-link");
+    inp.dataset.key = name;
+    inp.classList.toggle("saved", !!state.keys[name]);
+    inp.placeholder = state.keys[name] ? "•••••••• saved" : ph;
+    link.textContent = url ? "get key" : "";
+    link.href = url || "#";
+    if (s.polish.enabled && !state.keys[name] && name !== "custom") {
+      hint.className = "hint warn";
+      hint.textContent = "Add a key to turn on AI cleanup. Until then Murmur uses basic tidy-up.";
+    }
+  }
+  syncOllama();
+}
+
 let ollamaTimer;
 function syncOllama() {
   const on = s.polish.provider === "ollama";
@@ -522,7 +552,15 @@ async function initAutostart() {
   renderDictionary();
   initAutostart();
   syncEngineViews();
-  syncOllama();
+  syncCleanup();
   loadModels();
   showSection(location.hash.slice(1) || "general");
 })();
+
+// Web links open in the default browser; the app's web view ignores target="_blank".
+document.addEventListener("click", (e) => {
+  const a = e.target.closest('a[target="_blank"]');
+  if (!a || !a.href.startsWith("https://")) return;
+  e.preventDefault();
+  invoke("open_url", { url: a.href }).catch((err) => toast(String(err)));
+});

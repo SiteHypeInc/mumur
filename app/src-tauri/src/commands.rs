@@ -284,6 +284,26 @@ pub fn reset_permissions(app: tauri::AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+/// Open a web link in the default browser. The settings web view ignores
+/// target="_blank", which left every "get key" link dead.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https links".into());
+    }
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn relaunch(app: tauri::AppHandle) {
     app.restart();
