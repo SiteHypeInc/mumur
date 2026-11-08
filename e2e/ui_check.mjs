@@ -83,7 +83,10 @@ await page.waitForFunction(() => document.querySelector("#ollama-status").textCo
 await page.click("#ollama-pull");
 await page.waitForFunction(() => window.__pulled === true);
 await page.screenshot({ path: `${outDir}/3-engines-local.png`, fullPage: true });
+await page.selectOption('select[data-bind="stt.provider"]', "local");
+await page.evaluate(() => { s.stt.model = "small.en"; });
 await page.selectOption('select[data-bind="stt.provider"]', "groq");
+if (await page.evaluate(() => s.stt.model) !== "") errors.push("on-device model name kept for Groq");
 await page.screenshot({ path: `${outDir}/3-engines.png` });
 
 await page.click('nav a[data-s="styles"]');

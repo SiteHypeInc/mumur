@@ -76,7 +76,7 @@ function bindAll() {
       if (el.dataset.type === "int") val = parseInt(val || "0", 10);
       set(path, val);
       if (path === "hotkey.binding") syncBinding();
-      if (path === "stt.provider") syncEngineViews();
+      if (path === "stt.provider") { clearLocalModel(); bindAll(); syncEngineViews(); }
       if (path.startsWith("polish.")) syncCleanup();
       save(el.tagName === "SELECT" || el.type === "checkbox");
     };
@@ -289,6 +289,16 @@ listen("model-progress", ({ payload }) => {
   renderModels();
 });
 
+// On-device model names (small.en) mean nothing to Groq/OpenAI: leave the box
+// blank so they use their default.
+// Coming back to on-device with the box blank, pick the best model already downloaded.
+function clearLocalModel() {
+  if (s.stt.provider !== "local" && /^(tiny|base|small|medium|large)/.test(s.stt.model || "")) s.stt.model = "";
+  if (s.stt.provider === "local" && !s.stt.model) {
+    const have = models.filter((m) => m.downloaded);
+    if (have.length && !have.some((m) => m.id === DEFAULT_MODEL)) s.stt.model = have.at(-1).id;
+  }
+}
 function syncEngineViews() {
   const local = s.stt.provider === "local";
   $$(".when-local").forEach((x) => (x.style.display = local ? "" : "none"));
@@ -298,8 +308,9 @@ function syncEngineViews() {
   $$('input[name="engine"]').forEach((r) => (r.checked = (r.value === "local") === local));
 }
 $$('input[name="engine"]').forEach((r) => (r.onchange = () => {
-  if (r.value === "local") s.stt.provider = "local";
+  if (r.value === "local") { s.stt.provider = "local"; clearLocalModel(); }
   else if (s.stt.provider === "local") s.stt.provider = "groq";
+  clearLocalModel();
   if (r.value === "cloud" && s.polish.provider === "ollama") s.polish.provider = "anthropic";
   bindAll();
   syncEngineViews();

@@ -305,6 +305,12 @@ impl Controller {
                 settings.polish.enabled = false;
             }
         }
+        // The model box is shared: an on-device model name (small.en) means
+        // nothing to Groq or OpenAI, so they get their default instead.
+        #[cfg(feature = "local")]
+        if settings.stt.provider != SttProvider::Local && murmur_local::model(settings.stt.model.trim()).is_some() {
+            settings.stt.model.clear();
+        }
         let stt_key = secrets::get(secrets::stt_key_name(settings.stt.provider));
         let polish_key = secrets::get(secrets::polish_key_name(settings.polish.provider));
         let transcriber = if settings.stt.provider == SttProvider::Local {
