@@ -107,6 +107,13 @@ function renderSetup() {
     inp.classList.toggle("saved", !!state.keys[inp.dataset.key]);
     inp.placeholder = state.keys[inp.dataset.key] ? "•••••••• saved" : inp.placeholder;
     inp.onchange = async () => {
+      const v = inp.value.trim();
+      if (inp.dataset.key === "groq" && v && !v.startsWith("gsk_")) {
+        toast(v.startsWith("xai-")
+          ? "That's a Grok (xAI) key. Murmur needs a Groq key from console.groq.com/keys (starts with gsk_)"
+          : "Groq keys start with gsk_. Double-check you copied a key from console.groq.com/keys");
+        if (v.startsWith("xai-")) { inp.value = ""; return; }
+      }
       try {
         await invoke("set_api_key", { provider: inp.dataset.key, key: inp.value });
         state.keys[inp.dataset.key] = !!inp.value.trim();
@@ -380,6 +387,7 @@ const POLISH_KEYS = {
 };
 function syncCleanup() {
   const k = POLISH_KEYS[s.polish.provider];
+  $("#polish-url").style.display = ["ollama", "custom"].includes(s.polish.provider) ? "" : "none";
   $$(".when-polish-key").forEach((x) => (x.style.display = k ? "" : "none"));
   const hint = $("#polish-key-hint");
   hint.textContent = "";

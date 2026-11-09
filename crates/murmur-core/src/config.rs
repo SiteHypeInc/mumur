@@ -248,6 +248,24 @@ impl Settings {
         std::fs::rename(&tmp, path).map_err(|e| Error::Settings(e.to_string()))
     }
 
+    /// Where speech requests go. A Server URL only counts for a custom
+    /// server: one left over from trying "Custom" must not send a Groq key
+    /// to localhost.
+    pub fn stt_base_url(&self) -> String {
+        let p = self.stt.provider;
+        if p == SttProvider::Custom { or_default(&self.stt.base_url, p.default_base_url()) } else { p.default_base_url().to_owned() }
+    }
+
+    /// Where cleanup requests go; a Server URL only counts for Ollama and custom servers.
+    pub fn polish_base_url(&self) -> String {
+        let p = self.polish.provider;
+        if matches!(p, PolishProvider::Ollama | PolishProvider::Custom) {
+            or_default(&self.polish.base_url, p.default_base_url())
+        } else {
+            p.default_base_url().to_owned()
+        }
+    }
+
     pub fn build_transcriber(&self, api_key: Option<String>) -> Result<Arc<dyn Transcriber>> {
         let p = self.stt.provider;
         if p == SttProvider::Local {
@@ -258,7 +276,7 @@ impl Settings {
         }
         Ok(Arc::new(OpenAiCompatibleStt::new(
             p.label(),
-            &or_default(&self.stt.base_url, p.default_base_url()),
+            &self.stt_base_url(),
             api_key,
             &or_default(&self.stt.model, p.default_model()),
         )))
@@ -275,18 +293,18 @@ impl Settings {
         match p {
             PolishProvider::Anthropic => {
                 let mut a = AnthropicPolisher::new(key?, &model);
-                a.base_url = or_default(&self.polish.base_url, p.default_base_url());
+                a.base_url = self.polish_base_url();
                 Some(Arc::new(a))
             }
             PolishProvider::Custom | PolishProvider::Ollama => Some(Arc::new(OpenAiCompatiblePolisher::new(
                 p.label(),
-                &or_default(&self.polish.base_url, p.default_base_url()),
+                &self.polish_base_url(),
                 key,
                 &model,
             ))),
             _ => Some(Arc::new(OpenAiCompatiblePolisher::new(
                 p.label(),
-                &or_default(&self.polish.base_url, p.default_base_url()),
+                &self.polish_base_url(),
                 Some(key?),
                 &model,
             ))),
@@ -334,5 +352,20 @@ mod tests {
         local.polish.provider = PolishProvider::Ollama;
         assert!(local.build_transcriber(None).is_ok());
         assert!(local.build_polisher(None).is_some(), "Ollama needs no key");
+    }
+
+    #[test]
+    fn leftover_server_url_only_applies_to_custom() {
+        let mut s = Settings::default();
+        s.stt.provider = SttProvider::Groq;
+        s.stt.base_url = "http://127.0.0.1:8080/v1".into();
+        assert_eq!(s.stt_base_url(), SttProvider::Groq.default_base_url());
+        s.stt.provider = SttProvider::Custom;
+        assert_eq!(s.stt_base_url(), "http://127.0.0.1:8080/v1");
+        s.polish.provider = PolishProvider::Anthropic;
+        s.polish.base_url = "http://127.0.0.1:1234/v1".into();
+        assert_eq!(s.polish_base_url(), PolishProvider::Anthropic.default_base_url());
+        s.polish.provider = PolishProvider::Ollama;
+        assert_eq!(s.polish_base_url(), "http://127.0.0.1:1234/v1");
     }
 }

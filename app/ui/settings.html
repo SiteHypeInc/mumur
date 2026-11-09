@@ -166,7 +166,7 @@
       <label class="field">Model <span class="opt">blank = default</span><input data-bind="polish.model" id="polish-model" list="ollama-models" placeholder="claude-haiku-5-5" /></label>
       <datalist id="ollama-models"></datalist>
       <div class="row when-ollama"><span class="hint" id="ollama-status"></span><span class="sp"></span><button id="ollama-pull">Download model</button></div>
-      <label class="field">Server URL <span class="opt">blank = default</span><input data-bind="polish.base_url" /></label>
+      <label class="field" id="polish-url">Server URL <span class="opt">blank = default</span><input data-bind="polish.base_url" /></label>
       <label class="field">Skip cleanup under <span class="opt">words</span><input type="number" min="0" max="50" data-bind="polish.min_words" data-type="int" /></label>
       <p class="hint">No key? Murmur still removes "um"s and stutters and fixes capitalization on its own. For free AI cleanup, install <a href="https://ollama.com" target="_blank">Ollama</a>, run <code>ollama pull llama3.2</code>, and pick Ollama above.</p>
     </div>

@@ -78,15 +78,14 @@ pub async fn test_connection(ctl: Ctl<'_>) -> Result<String, String> {
         if sp != SttProvider::Custom && stt_key.is_none() {
             return Err(format!("Add your {} API key for transcription", sp.label()));
         }
-        let base = if s.stt.base_url.trim().is_empty() { sp.default_base_url().to_owned() } else { s.stt.base_url.clone() };
-        check::openai_compatible(sp.label(), &base, stt_key.as_deref()).await.map_err(|e| e.user_message())?;
+        check::openai_compatible(sp.label(), &s.stt_base_url(), stt_key.as_deref()).await.map_err(|e| key_problem(sp, stt_key.as_deref(), e))?;
         report.push(format!("Transcription: {} ✓", sp.label()));
     }
 
     if s.polish.enabled {
         let pp = s.polish.provider;
         let key = secrets::get(secrets::polish_key_name(pp));
-        let base = if s.polish.base_url.trim().is_empty() { pp.default_base_url().to_owned() } else { s.polish.base_url.clone() };
+        let base = s.polish_base_url();
         match (pp, key) {
             (PolishProvider::Anthropic, Some(k)) => check::anthropic(&base, &k).await,
             (PolishProvider::Custom | PolishProvider::Ollama, k) => check::openai_compatible(pp.label(), &base, k.as_deref()).await,
@@ -114,6 +113,21 @@ pub async fn test_connection(ctl: Ctl<'_>) -> Result<String, String> {
     Ok(report.join(" · "))
 }
 
+/// A rejected key often isn't a bad key but the wrong kind: Grok (xAI)
+/// keys look nothing like Groq's `gsk_` keys, and the names are one letter apart.
+fn key_problem(p: SttProvider, key: Option<&str>, e: murmur_core::Error) -> String {
+    let rejected = matches!(e, murmur_core::Error::Status { status: 401 | 403, .. });
+    match key {
+        Some(k) if rejected && p == SttProvider::Groq && k.trim().starts_with("xai-") => {
+            "That's a Grok (xAI) key. Murmur needs a Groq key: console.groq.com/keys, starts with gsk_".to_owned()
+        }
+        Some(k) if rejected && p == SttProvider::Groq && !k.trim().starts_with("gsk_") => {
+            "Groq rejected the key. Groq keys start with gsk_ (console.groq.com/keys)".to_owned()
+        }
+        _ => e.user_message(),
+    }
+}
+
 fn polish_model(s: &Settings) -> String {
     let m = s.polish.model.trim();
     if m.is_empty() { s.polish.provider.default_model().to_owned() } else { m.to_owned() }
@@ -135,8 +149,7 @@ pub async fn stt_models(ctl: Ctl<'_>, provider: SttProvider) -> Result<Vec<Strin
     };
     let base = {
         let s = ctl.settings.read().unwrap();
-        let b = s.stt.base_url.trim();
-        if b.is_empty() || s.stt.provider != provider { provider.default_base_url().to_owned() } else { b.to_owned() }
+        if s.stt.provider == provider { s.stt_base_url() } else { provider.default_base_url().to_owned() }
     };
     let key = secrets::get(secrets::stt_key_name(provider));
     let live = check::speech_models(provider.label(), &base, key.as_deref()).await.unwrap_or_default();
