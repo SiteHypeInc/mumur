@@ -57,7 +57,14 @@ pub struct Controller {
     /// and when we found out. Skips the doomed request so dictations don't
     /// wait on it. Cleared when settings change or a model is pulled.
     pub cleanup_down: Mutex<Option<(String, Instant)>>,
+    /// Recordings waiting to be transcribed. Each is written here before it's
+    /// sent anywhere and deleted once it's safely in history, so a failure
+    /// never loses what you said.
+    recordings: PathBuf,
 }
+
+/// Failed recordings kept for "Retry last recording".
+const KEEP_FAILED: usize = 5;
 
 /// How long to skip Ollama cleanup after it failed, before trying again.
 const CLEANUP_RETRY: Duration = Duration::from_secs(180);
@@ -79,6 +86,7 @@ impl Controller {
             log::error!("settings unreadable, using defaults: {e}");
             Settings::default()
         });
+        let recordings = history_path.parent().map(|d| d.join("recordings")).unwrap_or_else(|| PathBuf::from("recordings"));
         let history = History::open(&history_path).map_err(|e| log::error!("history unavailable: {e}")).ok();
         if let Some(h) = history.as_ref() {
             prune_history(h, &settings);
@@ -99,6 +107,7 @@ impl Controller {
             local: crate::local::LocalEngine::new(models_dir),
             last_text: Mutex::new(None),
             cleanup_down: Mutex::new(None),
+            recordings,
         })
     }
 
@@ -293,11 +302,85 @@ impl Controller {
             }
             let snap = session.snapshot.lock().unwrap().take().unwrap_or_default();
             log::info!("recorded {} ms", session.started.elapsed().as_millis());
-            me.process(samples, snap).await;
+            me.process(samples, snap, None).await;
         });
     }
 
-    async fn process(self: Arc<Self>, samples: Vec<f32>, snap: Snapshot) {
+    /// The newest recording that didn't make it, if any.
+    pub fn saved_recording(&self) -> Option<PathBuf> {
+        let mut wavs: Vec<PathBuf> = std::fs::read_dir(&self.recordings)
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "wav"))
+            .collect();
+        wavs.sort();
+        wavs.pop()
+    }
+
+    /// Transcribe the newest saved recording again, into whatever has focus now.
+    pub fn retry_last(self: &Arc<Self>) {
+        let Some(path) = self.saved_recording() else {
+            overlay::set(&self.app, PillState::Message { text: "No saved recording to retry".into(), tone: "muted" });
+            return self.hide_later(1500);
+        };
+        let Some((samples, _)) = std::fs::read(&path).ok().and_then(|b| murmur_core::audio::decode_wav(&b)) else {
+            log::warn!("saved recording unreadable, removing: {}", path.display());
+            let _ = std::fs::remove_file(&path);
+            crate::tray::refresh(&self.app);
+            return self.fail("That saved recording couldn't be read");
+        };
+        log::info!("retrying saved recording {}", path.display());
+        overlay::set(&self.app, PillState::Processing);
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let snap = Snapshot { target: frontmost::target(), surrounding: None };
+            me.process(samples, snap, Some(path)).await;
+        });
+    }
+
+    /// Write the recording to disk before anything can go wrong with it.
+    fn save_recording(&self, samples: &[f32]) -> Option<PathBuf> {
+        std::fs::create_dir_all(&self.recordings).ok()?;
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let path = self.recordings.join(format!("{ts:015}.wav"));
+        let wav = murmur_core::audio::encode_wav(samples, murmur_core::audio::TARGET_RATE);
+        match std::fs::write(&path, wav) {
+            Ok(()) => Some(path),
+            Err(e) => {
+                log::warn!("couldn't save the recording: {e}");
+                None
+            }
+        }
+    }
+
+    /// Keep only the newest few failed recordings.
+    fn prune_recordings(&self) {
+        let Ok(dir) = std::fs::read_dir(&self.recordings) else { return };
+        let mut wavs: Vec<PathBuf> = dir.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
+        wavs.sort();
+        let excess = wavs.len().saturating_sub(KEEP_FAILED);
+        for old in wavs.into_iter().take(excess) {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+
+    /// A failure with the audio safe on disk: say how to get it back.
+    fn fail_saved(self: &Arc<Self>, message: &str, saved: Option<&PathBuf>) {
+        if saved.is_none() {
+            return self.fail(message);
+        }
+        self.prune_recordings();
+        crate::tray::refresh(&self.app);
+        log::warn!("dictation failed: {message} (recording kept for retry)");
+        overlay::set(
+            &self.app,
+            PillState::Message { text: format!("{message}. Recording saved: menu bar → Retry last recording"), tone: "error" },
+        );
+        self.cue(Cue::Error);
+        self.hide_later(7000);
+    }
+
+    async fn process(self: Arc<Self>, samples: Vec<f32>, snap: Snapshot, saved: Option<PathBuf>) {
         let mut settings = self.settings.read().unwrap().clone();
         if let Some((why, at)) = self.cleanup_down.lock().unwrap().as_ref() {
             if settings.polish.enabled && at.elapsed() < CLEANUP_RETRY {
@@ -311,24 +394,6 @@ impl Controller {
         if settings.stt.provider != SttProvider::Local && murmur_local::model(settings.stt.model.trim()).is_some() {
             settings.stt.model.clear();
         }
-        let stt_key = secrets::get(secrets::stt_key_name(settings.stt.provider));
-        let polish_key = secrets::get(secrets::polish_key_name(settings.polish.provider));
-        let transcriber = if settings.stt.provider == SttProvider::Local {
-            match self.local.transcriber(LocalEngine::model_id(&settings.stt.model)) {
-                Ok(t) => t,
-                Err(msg) => return self.fail(&msg),
-            }
-        } else {
-            match settings.build_transcriber(stt_key) {
-                Ok(t) => t,
-                Err(e) => return self.fail(&e.user_message()),
-            }
-        };
-        let polisher = settings.build_polisher(polish_key);
-        if settings.polish.enabled && polisher.is_none() {
-            log::warn!("cleanup: no {} API key saved; using basic tidy-up", settings.polish.provider.label());
-        }
-        let engine = Engine { transcriber, polisher };
         log::info!("captured {} samples, {:.1} dBFS", samples.len(), murmur_core::audio::rms_dbfs(&samples));
         if murmur_core::audio::is_digital_silence(&samples) {
             return self.fail(if cfg!(target_os = "macos") {
@@ -337,11 +402,39 @@ impl Controller {
                 "No audio from the microphone. Check your input device"
             });
         }
+        let saved = saved.or_else(|| self.save_recording(&samples));
+        let stt_key = secrets::get(secrets::stt_key_name(settings.stt.provider));
+        let polish_key = secrets::get(secrets::polish_key_name(settings.polish.provider));
+        let transcriber = if settings.stt.provider == SttProvider::Local {
+            match self.local.transcriber(LocalEngine::model_id(&settings.stt.model)) {
+                Ok(t) => t,
+                Err(msg) => return self.fail_saved(&msg, saved.as_ref()),
+            }
+        } else {
+            match settings.build_transcriber(stt_key) {
+                Ok(t) => t,
+                Err(e) => return self.fail_saved(&e.user_message(), saved.as_ref()),
+            }
+        };
+        let polisher = settings.build_polisher(polish_key);
+        if settings.polish.enabled && polisher.is_none() {
+            log::warn!("cleanup: no {} API key saved; using basic tidy-up", settings.polish.provider.label());
+        }
+        let fallback = (settings.stt.provider != SttProvider::Local).then(|| self.local_fallback()).flatten();
+        let engine = Engine { transcriber, fallback, polisher };
         let job = Job { samples, context: snap.target.context.clone(), surrounding_text: snap.surrounding };
         let outcome = match engine.run(job, &settings).await {
             Ok(o) => o,
-            Err(e) => return self.fail(&e.user_message()),
+            Err(e) => {
+                log::warn!("transcription failed: {e}");
+                return self.fail_saved(&e.user_message(), saved.as_ref());
+            }
         };
+        // Transcribed: the text goes to history below, so the audio can go.
+        if let Some(p) = &saved {
+            let _ = std::fs::remove_file(p);
+            crate::tray::refresh(&self.app);
+        }
         log::info!(
             "dictation: {} ms audio, stt {} ms, cleanup {} ms, {:?} in {:?}{}",
             outcome.audio_ms,
@@ -604,4 +697,29 @@ fn ollama_problem(s: &Settings, note: &str) -> Option<String> {
     } else {
         format!("{note}. Basic cleanup used.")
     })
+}
+
+impl Controller {
+    /// The best downloaded on-device model, loaded only if the cloud fails.
+    fn local_fallback(self: &Arc<Self>) -> Option<Arc<dyn murmur_core::providers::stt::Transcriber>> {
+        let have: Vec<String> = self.local.list().into_iter().filter(|m| m.downloaded).map(|m| m.id.to_string()).collect();
+        let id = have.iter().find(|id| id.as_str() == crate::local::DEFAULT_MODEL).or(have.last())?.clone();
+        Some(Arc::new(LocalFallback { ctl: self.clone(), id }))
+    }
+}
+
+struct LocalFallback {
+    ctl: Arc<Controller>,
+    id: String,
+}
+
+#[async_trait::async_trait]
+impl murmur_core::providers::stt::Transcriber for LocalFallback {
+    async fn transcribe(&self, wav: Vec<u8>, req: &murmur_core::providers::stt::SttRequest) -> murmur_core::Result<String> {
+        let t = self.ctl.local.transcriber(&self.id).map_err(murmur_core::Error::NotConfigured)?;
+        t.transcribe(wav, req).await
+    }
+    fn label(&self) -> String {
+        format!("On-device · {}", self.id)
+    }
 }

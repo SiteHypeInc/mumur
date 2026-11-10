@@ -116,6 +116,65 @@ pub fn encode_wav(samples: &[f32], rate: u32) -> Vec<u8> {
     out
 }
 
+/// Read back a WAV written by [`encode_wav`] (16-bit PCM mono). Used to retry
+/// a recording saved to disk. Returns (samples, rate).
+pub fn decode_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32)> {
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let rate = u32::from_le_bytes(bytes[24..28].try_into().ok()?);
+    let channels = u16::from_le_bytes(bytes[22..24].try_into().ok()?);
+    let bits = u16::from_le_bytes(bytes[34..36].try_into().ok()?);
+    if channels != 1 || bits != 16 {
+        return None;
+    }
+    // Find the data chunk rather than assuming offset 36.
+    let mut pos = 12;
+    while pos + 8 <= bytes.len() {
+        let id = &bytes[pos..pos + 4];
+        let len = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().ok()?) as usize;
+        if id == b"data" {
+            let end = (pos + 8 + len).min(bytes.len());
+            let samples = bytes[pos + 8..end]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| i16::from_le_bytes(*b) as f32 / i16::MAX as f32)
+                .collect();
+            return Some((samples, rate));
+        }
+        pos += 8 + len + (len & 1);
+    }
+    None
+}
+
+/// Split a long recording into pieces of at most `max_secs`, cutting at the
+/// quietest moment in the last few seconds before each limit so words aren't
+/// sliced in half. Short recordings come back as one piece.
+pub fn split_for_upload(samples: &[f32], rate: u32, max_secs: u32) -> Vec<&[f32]> {
+    let max = (rate * max_secs) as usize;
+    if max == 0 || samples.len() <= max {
+        return vec![samples];
+    }
+    let frame = (rate as usize / 10).max(1); // 100 ms
+    let search = (rate as usize * 8).min(max / 2); // look back up to 8 s
+    let mut out = Vec::new();
+    let mut start = 0;
+    while samples.len() - start > max {
+        let limit = start + max;
+        let from = limit - search;
+        let cut = (from..limit - frame)
+            .step_by(frame)
+            .min_by(|&a, &b| rms(&samples[a..a + frame]).total_cmp(&rms(&samples[b..b + frame])))
+            .map(|q| q + frame / 2)
+            .unwrap_or(limit);
+        out.push(&samples[start..cut]);
+        start = cut;
+    }
+    out.push(&samples[start..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +248,36 @@ mod tests {
         assert_eq!(&wav[8..12], b"WAVE");
         assert_eq!(wav.len(), 44 + 6);
         assert_eq!(i16::from_le_bytes([wav[46], wav[47]]), i16::MAX);
+    }
+
+    #[test]
+    fn wav_round_trip() {
+        let samples: Vec<f32> = (0..1600).map(|i| ((i as f32) / 50.0).sin() * 0.5).collect();
+        let (back, rate) = decode_wav(&encode_wav(&samples, 16_000)).unwrap();
+        assert_eq!(rate, 16_000);
+        assert_eq!(back.len(), samples.len());
+        assert!(back.iter().zip(&samples).all(|(a, b)| (a - b).abs() < 1e-3));
+        assert!(decode_wav(b"not a wav").is_none());
+    }
+
+    #[test]
+    fn splits_long_audio_at_pauses() {
+        let rate = 16_000;
+        // 5 minutes of "speech" with a one-second pause every 5 s.
+        let samples: Vec<f32> = (0..rate as usize * 300)
+            .map(|i| if (i / rate as usize) % 5 == 4 { 0.0 } else { ((i as f32) / 7.0).sin() * 0.3 })
+            .collect();
+        let parts = split_for_upload(&samples, rate, 60);
+        assert!(parts.len() >= 5, "{} parts", parts.len());
+        assert_eq!(parts.iter().map(|p| p.len()).sum::<usize>(), samples.len());
+        assert!(parts.iter().all(|p| p.len() <= rate as usize * 60));
+        // Every cut lands inside a quiet gap.
+        let mut at = 0;
+        for p in &parts[..parts.len() - 1] {
+            at += p.len();
+            assert!(samples[at].abs() < 1e-6, "cut at {at} is not in a pause");
+        }
+        // Short clips stay whole.
+        assert_eq!(split_for_upload(&samples[..rate as usize * 30], rate, 60).len(), 1);
     }
 }

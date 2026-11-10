@@ -2872,6 +2872,7 @@ dependencies = [
 name = "murmur"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "env_logger",
  "keyring",
  "log",

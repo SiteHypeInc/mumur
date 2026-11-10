@@ -41,7 +41,8 @@ impl OpenAiCompatibleStt {
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key: api_key.filter(|k| !k.trim().is_empty()),
             model: model.to_owned(),
-            timeout: Duration::from_secs(20),
+            // Per piece: pieces are at most a minute of audio (~2 MB).
+            timeout: Duration::from_secs(60),
             label: label.to_owned(),
         }
     }

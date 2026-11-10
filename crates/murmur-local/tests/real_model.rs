@@ -56,6 +56,7 @@ async fn full_pipeline_offline_with_vocabulary_and_tidy() {
     settings.dictionary.terms.push("Fellow Americans".into());
     let engine = Engine {
         transcriber: Arc::new(engine_for(path, Arc::default())),
+        fallback: None,
         polisher: None, // the free path: no LLM, built-in tidy-up
     };
     let out = engine

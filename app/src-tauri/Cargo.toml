@@ -14,6 +14,7 @@ local = ["dep:murmur-local"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+async-trait = "0.1"
 murmur-core = { path = "../../crates/murmur-core" }
 murmur-sys = { path = "../../crates/murmur-sys" }
 murmur-local = { path = "../../crates/murmur-local", optional = true }

@@ -52,7 +52,7 @@ impl AnthropicPolisher {
             base_url: "https://api.anthropic.com".into(),
             api_key,
             model: model.to_owned(),
-            timeout: Duration::from_secs(8),
+            timeout: Duration::from_secs(45),
         }
     }
 }
@@ -121,7 +121,7 @@ impl OpenAiCompatiblePolisher {
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key: api_key.filter(|k| !k.trim().is_empty()),
             model: model.to_owned(),
-            timeout: Duration::from_secs(8),
+            timeout: Duration::from_secs(45),
         }
     }
 }

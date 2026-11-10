@@ -50,6 +50,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         refs.extend(recent_items.iter().map(|i| i as &dyn IsMenuItem<Wry>));
     }
     let recent_menu = Submenu::with_items(app, "Recent", true, &refs)?;
+    // Shown only when a recording failed to transcribe and is waiting on disk.
+    let retry = MenuItem::with_id(app, "retry", "⟳ Retry last recording", true, None::<&str>)?;
+    let has_saved = ctl.saved_recording().is_some();
 
     let history = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Settings…", true, None::<&str>)?;
@@ -57,7 +60,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let quit = MenuItem::with_id(app, "quit", "Quit Murmur", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    Menu::with_items(app, &[&toggle, &paste_last, &recent_menu, &sep1, &history, &open, &sep2, &pause, &quit])
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&toggle];
+    if has_saved {
+        items.push(&retry);
+    }
+    items.extend([&paste_last as &dyn IsMenuItem<Wry>, &recent_menu, &sep1, &history, &open, &sep2, &pause, &quit]);
+    Menu::with_items(app, &items)
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
@@ -67,6 +75,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         "history" => crate::open_settings(app, "history"),
         "toggle" => ctl.toggle(),
         "paste_last" => ctl.paste_last(),
+        "retry" => ctl.retry_last(),
         "pause" => {
             let now = !ctl.paused.load(Ordering::SeqCst);
             ctl.paused.store(now, Ordering::SeqCst);

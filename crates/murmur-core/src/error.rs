@@ -19,6 +19,16 @@ pub enum Error {
 }
 
 impl Error {
+    /// Worth retrying: the network, a timeout, a rate limit or a server hiccup.
+    /// A rejected key or a bad request will fail the same way again.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Error::Network(_) | Error::Timeout(..) => true,
+            Error::Status { status, .. } => matches!(status, 408 | 409 | 425 | 429 | 500..=599),
+            _ => false,
+        }
+    }
+
     /// Short, user-facing explanation for the overlay pill.
     pub fn user_message(&self) -> String {
         match self {
@@ -27,13 +37,25 @@ impl Error {
             Error::Status { status: 404, provider, body } if body.contains("not found") && body.contains("model") => {
                 format!("{provider} model not found")
             }
-            Error::Status { provider, status, .. } => format!("{provider} error ({status})"),
+            Error::Status { provider, status, body } => match api_message(body) {
+                Some(m) => format!("{provider} error ({status}): {m}"),
+                None => format!("{provider} error ({status})"),
+            },
             Error::Timeout(what, _) => format!("{what} took too long"),
             Error::Network(_) => "No connection".into(),
             Error::NotConfigured(what) => format!("Set up {what} in Settings"),
             other => other.to_string(),
         }
     }
+}
+
+/// The human part of an API error body (`{"error": {"message": "..."}}`), so
+/// the pill can say *why* instead of just a status code.
+fn api_message(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let m = v.pointer("/error/message").or_else(|| v.get("error")).and_then(|m| m.as_str())?;
+    let m = m.trim();
+    (!m.is_empty()).then(|| if m.chars().count() > 120 { m.chars().take(120).collect::<String>() + "…" } else { m.to_owned() })
 }
 
 impl From<reqwest::Error> for Error {
@@ -65,5 +87,14 @@ mod tests {
         assert_eq!(e.user_message(), "Ollama model not found");
         let e = Error::Status { provider: "Groq".into(), status: 404, body: "no route".into() };
         assert_eq!(e.user_message(), "Groq error (404)");
+        let e = Error::Status {
+            provider: "Groq".into(),
+            status: 400,
+            body: r#"{"error":{"message":"file must be one of the following types","type":"invalid_request_error"}}"#.into(),
+        };
+        assert_eq!(e.user_message(), "Groq error (400): file must be one of the following types");
+        assert!(!e.is_transient());
+        assert!(Error::Status { provider: "Groq".into(), status: 503, body: String::new() }.is_transient());
+        assert!(Error::Network("reset".into()).is_transient());
     }
 }

@@ -37,7 +37,8 @@ restore_delay_ms = 300
 TOML
 pkill -f '^Xvfb :98' 2>/dev/null; sleep 0.3
 Xvfb :98 -screen 0 1280x800x24 +extension RECORD >/dev/null 2>&1 & XV=$!
-python3 -I "$HERE/mock_providers.py" 8799 "$WORK/requests.log" & MOCK=$!
+# The fake provider fails the first two transcriptions: Murmur must retry, not lose the dictation.
+MOCK_STT_FAILURES=2 python3 -I "$HERE/mock_providers.py" 8799 "$WORK/requests.log" & MOCK=$!
 sleep 1
 "${PYTHON_TK:-/usr/bin/python3.12}" -I "$HERE/target_app.py" "$WORK/field.txt" & TK=$!
 MURMUR_NO_KEYCHAIN=1 RUST_LOG=info "$BIN" > "$WORK/app.log" 2>&1 & APP=$!
@@ -75,6 +76,8 @@ ok=1
 [[ "$CLIP" == "original clipboard" ]] || { echo "x clipboard not restored"; ok=0; }
 grep -q '"system_has_work_chat": true' "$WORK/requests.log" || { echo "x app not classified as work chat"; ok=0; }
 grep -q '"vocab": true' "$WORK/requests.log" || { echo "x vocabulary not sent to STT"; ok=0; }
+[[ "$(grep -c '"failed": true' "$WORK/requests.log")" == 2 ]] || { echo "x expected two failed transcription attempts before the retry worked"; ok=0; }
+[[ -z "$(ls -A "$HOME/.local/share/app.murmur.dictation/recordings" 2>/dev/null)" ]] || { echo "x transcribed recording was left on disk"; ok=0; }
 if [[ $ok == 1 ]]; then echo "E2E PASS"; exit 0; fi
 echo "E2E FAIL. Diagnostics:"
 echo "$PULSE" | sed 's/^/x | pulse: /'

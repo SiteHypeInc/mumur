@@ -18,6 +18,8 @@ use crate::providers::stt::{self, SttRequest, Transcriber};
 
 pub struct Engine {
     pub transcriber: Arc<dyn Transcriber>,
+    /// On-device model to fall back on when the cloud fails for good.
+    pub fallback: Option<Arc<dyn Transcriber>>,
     pub polisher: Option<Arc<dyn Polisher>>,
 }
 
@@ -43,7 +45,20 @@ pub struct Outcome {
     pub note: Option<String>,
 }
 
-const POLISH_DEADLINE: Duration = Duration::from_secs(6);
+/// Long recordings go up in pieces this long: small uploads finish quickly,
+/// a failure costs one piece rather than the whole dictation, and pieces
+/// transcribe in parallel.
+pub const PIECE_SECS: u32 = 60;
+/// Pieces in flight at once (Groq's free tier allows ~20 requests a minute).
+const PARALLEL_PIECES: usize = 3;
+/// Waits before each retry of a piece that hit a network error, timeout,
+/// rate limit or server error.
+const RETRY_BACKOFF: [Duration; 2] = [Duration::from_millis(800), Duration::from_millis(2500)];
+
+/// Cleanup gets more time for longer text: 6 s, plus 1 s per 40 words, up to 45 s.
+fn polish_deadline(words: usize) -> Duration {
+    Duration::from_secs((6 + words as u64 / 40).min(45))
+}
 
 impl Engine {
     pub async fn run(&self, job: Job, settings: &Settings) -> Result<Outcome> {
@@ -66,7 +81,6 @@ impl Engine {
             return Ok(out);
         }
         let trimmed = audio::trim_silence(&job.samples, TARGET_RATE, threshold, 250);
-        let wav = audio::encode_wav(trimmed, TARGET_RATE);
 
         let terms = &settings.dictionary.terms;
         let stt_req = SttRequest {
@@ -74,8 +88,11 @@ impl Engine {
             prompt: stt::vocabulary_prompt(terms),
         };
         let t0 = Instant::now();
-        let raw = self.transcriber.transcribe(wav, &stt_req).await?;
+        let (raw, fell_back) = self.transcribe_pieces(trimmed, threshold, &stt_req).await?;
         out.stt_ms = t0.elapsed().as_millis() as u64;
+        if fell_back {
+            out.note = Some(format!("{} didn't answer; transcribed on this computer", self.transcriber.label()));
+        }
 
         if stt::is_phantom(&raw, audio::duration_ms(trimmed.len(), TARGET_RATE)) {
             out.note = Some("No speech detected".into());
@@ -96,7 +113,7 @@ impl Engine {
                 surrounding_text: job.surrounding_text.as_deref(),
             });
             let t1 = Instant::now();
-            let result = tokio::time::timeout(POLISH_DEADLINE, p.complete(&system, &prompt::user_message(&fixed))).await;
+            let result = tokio::time::timeout(polish_deadline(words), p.complete(&system, &prompt::user_message(&fixed))).await;
             out.polish_ms = t1.elapsed().as_millis() as u64;
             match result {
                 Ok(Ok(cleaned)) => match llm::sanitize(&fixed, &cleaned) {
@@ -121,6 +138,71 @@ impl Engine {
         }
         out.text = text.trim().to_owned();
         Ok(out)
+    }
+}
+
+impl Engine {
+    /// Transcribe in pieces (see [`PIECE_SECS`]), a few at a time, retrying
+    /// transient failures and falling back to the on-device model. Returns
+    /// the joined text and whether the fallback was used.
+    async fn transcribe_pieces(&self, samples: &[f32], threshold: f32, req: &SttRequest) -> Result<(String, bool)> {
+        let pieces = audio::split_for_upload(samples, TARGET_RATE, PIECE_SECS);
+        if pieces.len() > 1 {
+            log::info!("transcribing {} s of audio in {} pieces", samples.len() / TARGET_RATE as usize, pieces.len());
+        }
+        let gate = Arc::new(tokio::sync::Semaphore::new(PARALLEL_PIECES));
+        let mut tasks = tokio::task::JoinSet::new();
+        for (i, piece) in pieces.iter().enumerate() {
+            // A long pause can make a whole piece silent; sending it would only invite "Thank you."
+            if pieces.len() > 1 && !audio::has_speech(piece, TARGET_RATE, threshold) {
+                continue;
+            }
+            let wav = audio::encode_wav(piece, TARGET_RATE);
+            let (primary, fallback, req, gate) = (self.transcriber.clone(), self.fallback.clone(), req.clone(), gate.clone());
+            tasks.spawn(async move {
+                let _slot = gate.acquire_owned().await;
+                (i, transcribe_piece(primary, fallback, wav, &req, i).await)
+            });
+        }
+        let mut texts = vec![String::new(); pieces.len()];
+        let mut fell_back = false;
+        while let Some(done) = tasks.join_next().await {
+            let (i, result) = done.map_err(|e| crate::Error::BadResponse("transcription".into(), e.to_string()))?;
+            let (text, fb) = result?;
+            texts[i] = text;
+            fell_back |= fb;
+        }
+        let joined = texts.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
+        Ok((joined, fell_back))
+    }
+}
+
+async fn transcribe_piece(
+    primary: Arc<dyn Transcriber>,
+    fallback: Option<Arc<dyn Transcriber>>,
+    wav: Vec<u8>,
+    req: &SttRequest,
+    index: usize,
+) -> Result<(String, bool)> {
+    let mut attempt = 0;
+    let err = loop {
+        match primary.transcribe(wav.clone(), req).await {
+            Ok(text) => return Ok((text, false)),
+            Err(e) if e.is_transient() && attempt < RETRY_BACKOFF.len() => {
+                log::warn!("transcription piece {index}: {e}; retrying");
+                tokio::time::sleep(RETRY_BACKOFF[attempt]).await;
+                attempt += 1;
+            }
+            Err(e) => break e,
+        }
+    };
+    log::warn!("transcription piece {index} failed: {err}");
+    match fallback {
+        Some(local) => {
+            log::info!("transcription piece {index}: using the on-device model");
+            local.transcribe(wav, req).await.map(|t| (t, true)).map_err(|_| err)
+        }
+        None => Err(err),
     }
 }
 
@@ -176,6 +258,7 @@ mod tests {
     fn engine(raw: &str, llm: Option<Arc<FakeLlm>>) -> Engine {
         Engine {
             transcriber: Arc::new(FakeStt(raw.into())),
+            fallback: None,
             polisher: llm.map(|l| l as Arc<dyn Polisher>),
         }
     }
@@ -244,5 +327,89 @@ mod tests {
         assert_eq!(out.text, "Sounds good");
         assert!(out.note.is_none());
         assert!(llm.seen_system.lock().unwrap().is_empty());
+    }
+
+    /// Fails the first `failures` calls with `error`, then answers "piece N"
+    /// where N counts successful calls.
+    struct FlakyStt {
+        failures: Mutex<u32>,
+        error: fn() -> Error,
+        calls: std::sync::atomic::AtomicU32,
+        ok: std::sync::atomic::AtomicU32,
+    }
+    impl FlakyStt {
+        fn new(failures: u32, error: fn() -> Error) -> Arc<Self> {
+            Arc::new(Self { failures: Mutex::new(failures), error, calls: Default::default(), ok: Default::default() })
+        }
+    }
+    #[async_trait]
+    impl Transcriber for FlakyStt {
+        async fn transcribe(&self, _wav: Vec<u8>, _r: &SttRequest) -> Result<String> {
+            use std::sync::atomic::Ordering::SeqCst;
+            self.calls.fetch_add(1, SeqCst);
+            {
+                let mut f = self.failures.lock().unwrap();
+                if *f > 0 {
+                    *f -= 1;
+                    return Err((self.error)());
+                }
+            }
+            Ok(format!("piece {}", self.ok.fetch_add(1, SeqCst)))
+        }
+        fn label(&self) -> String {
+            "Groq".into()
+        }
+    }
+
+    fn long_speech(secs: usize) -> Vec<f32> {
+        // Speech with a short pause every 5 s, so the splitter has places to cut.
+        (0..16_000 * secs).map(|i| if (i / 16_000) % 5 == 4 && i % 16_000 < 4_000 { 0.0 } else { 0.2 * (i as f32 * 0.09).sin() }).collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn five_minute_dictation_goes_up_in_pieces_and_keeps_order() {
+        let stt = FlakyStt::new(0, || unreachable!());
+        let e = Engine { transcriber: stt.clone(), fallback: None, polisher: None };
+        let out = e.run(Job { samples: long_speech(300), context: slack(), surrounding_text: None }, &Settings::default()).await.unwrap();
+        let calls = stt.calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert!((5..=6).contains(&calls), "{calls} pieces");
+        // Every piece made it into the text.
+        for n in 0..calls {
+            assert!(out.raw.contains(&format!("piece {n}")), "{}", out.raw);
+        }
+        assert!(out.note.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn network_blips_are_retried() {
+        let stt = FlakyStt::new(2, || Error::Network("connection reset".into()));
+        let e = Engine { transcriber: stt.clone(), fallback: None, polisher: None };
+        let out = e.run(job(slack()), &Settings::default()).await.unwrap();
+        assert_eq!(out.raw, "piece 0");
+        assert_eq!(stt.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bad_request_is_not_retried() {
+        let stt = FlakyStt::new(5, || Error::Status { provider: "Groq".into(), status: 400, body: String::new() });
+        let e = Engine { transcriber: stt.clone(), fallback: None, polisher: None };
+        assert!(e.run(job(slack()), &Settings::default()).await.is_err());
+        assert_eq!(stt.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cloud_outage_falls_back_to_the_local_model() {
+        let cloud = FlakyStt::new(99, || Error::Timeout("Groq transcription".into(), Duration::from_secs(60)));
+        let e = Engine { transcriber: cloud, fallback: Some(Arc::new(FakeStt("said locally".into()))), polisher: None };
+        let out = e.run(job(slack()), &Settings::default()).await.unwrap();
+        assert_eq!(out.raw, "said locally");
+        assert!(out.note.unwrap().contains("on this computer"));
+    }
+
+    #[test]
+    fn cleanup_gets_more_time_for_long_text() {
+        assert_eq!(polish_deadline(20), Duration::from_secs(6));
+        assert_eq!(polish_deadline(800), Duration::from_secs(26));
+        assert_eq!(polish_deadline(10_000), Duration::from_secs(45));
     }
 }
