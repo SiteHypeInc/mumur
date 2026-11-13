@@ -176,6 +176,112 @@ pub fn with_trailing_space(text: &str) -> String {
     format!("{t} ")
 }
 
+/// Words for comparing a cleanup against the transcript: lowercase letters,
+/// digits and apostrophes only ("Friday?" -> "friday", "Don't" -> "don't").
+fn word_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| c.is_whitespace() || c == '-' || c == '/' || c == '—')
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric() || *c == '\'').collect::<String>().to_lowercase())
+        .map(|w| w.trim_matches('\'').to_owned())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Did a cleanup keep the speaker's words? It may drop filler, stutters and
+/// spoken punctuation, and change case and punctuation, but it must not
+/// invent words (paraphrase, added sentences) or drop a big share of them
+/// (summarizing). Allowed beyond the transcript's own words: two adjacent
+/// words joined ("git hub" -> "GitHub"), vocabulary terms, and anything with a
+/// digit (number formatting). A small slack covers misheard-word fixes.
+pub fn faithful(raw: &str, cleaned: &str, vocabulary: &[String]) -> bool {
+    use std::collections::HashMap;
+    let raw_words = word_tokens(raw);
+    let out_words = word_tokens(cleaned);
+    let mut budget: HashMap<String, i32> = HashMap::new();
+    for w in &raw_words {
+        *budget.entry(w.clone()).or_default() += 1;
+    }
+    for pair in raw_words.windows(2) {
+        *budget.entry(format!("{}{}", pair[0], pair[1])).or_default() += 1;
+    }
+    for t in vocabulary {
+        for w in word_tokens(t) {
+            *budget.entry(w).or_default() += 1_000;
+        }
+    }
+    let mut invented = 0usize;
+    for w in &out_words {
+        if w.chars().any(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        match budget.get_mut(w) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => invented += 1,
+        }
+    }
+    let slack = 1 + raw_words.len() / 25;
+    // Fillers and stutters rarely exceed a third of what was said.
+    let kept_enough = raw_words.len() < 8 || out_words.len() * 3 >= raw_words.len() * 2;
+    invented <= slack && kept_enough
+}
+
+/// Drop sound captions recognizers add for noise: "[Music]", "(dog barking)",
+/// "*coughs*". Only short bracketed bits go, so a real parenthetical stays.
+pub fn strip_sound_tags(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(['[', '(', '*']) {
+        let open = rest[start..].chars().next().unwrap();
+        let close = match open { '[' => ']', '(' => ')', _ => '*' };
+        let after = &rest[start + 1..];
+        match after.find(close) {
+            Some(len) if after[..len].split_whitespace().count() <= 4 && !after[..len].trim().is_empty()
+                && (open == '[' || is_sound_word(&after[..len])) =>
+            {
+                out.push_str(&rest[..start]);
+                rest = &after[len + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..start + 1]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_sound_word(inner: &str) -> bool {
+    const SOUNDS: &[&str] = &[
+        "music", "applause", "laughter", "laughs", "laughing", "cough", "coughs", "coughing", "barking", "barks", "bark",
+        "dog", "noise", "silence", "inaudible", "sighs", "sigh", "beep", "beeping", "horn", "honking", "background",
+        "clapping", "breathing", "static", "typing", "door", "footsteps", "wind", "blank_audio",
+    ];
+    inner.split_whitespace().any(|w| SOUNDS.contains(&w.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_lowercase().as_str()))
+}
+
+/// Recognizers sometimes get stuck repeating a phrase ("and then and then
+/// and then..."). Keep at most two copies of any phrase of 1-8 words
+/// repeated back to back.
+pub fn collapse_repeats(text: &str) -> String {
+    let mut words: Vec<&str> = text.split_whitespace().collect();
+    for n in (1..=8).rev() {
+        let mut i = 0;
+        while i + 3 * n <= words.len() {
+            let key = |k: usize| words[k..k + n].iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+            let first = key(i);
+            let mut reps = 1;
+            while i + (reps + 1) * n <= words.len() && key(i + reps * n) == first {
+                reps += 1;
+            }
+            if reps >= 3 {
+                words.drain(i + 2 * n..i + reps * n);
+            }
+            i += 1;
+        }
+    }
+    words.join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +324,34 @@ mod tests {
     fn trailing_space() {
         assert_eq!(with_trailing_space("Done."), "Done. ");
         assert_eq!(with_trailing_space("  "), "");
+    }
+
+    #[test]
+    fn faithful_allows_cleanup_but_not_rewrites() {
+        let raw = "um so can you push it to git hub before friday uh comma thanks";
+        assert!(faithful(raw, "So can you push it to GitHub before Friday, thanks.", &[]));
+        assert!(faithful("meet at three thirty", "Meet at 3:30.", &[]));
+        assert!(faithful("ping sinead about it", "Ping Sinéad about it.", &["Sinéad".into()]));
+        // Paraphrase and invented content are rejected.
+        assert!(!faithful(raw, "Could you please push this to GitHub by Friday? Thank you so much!", &[]));
+        assert!(!faithful("send the report", "Send the report. Let me know if you have any questions.", &[]));
+        // Summarizing away most of a long dictation is rejected.
+        let long = "so the plan is we finish the landing page this week then we test the pricing next week and launch after that";
+        assert!(!faithful(long, "Finish the landing page, then launch.", &[]));
+        assert!(faithful(long, "So the plan is: we finish the landing page this week, then we test the pricing next week, and launch after that.", &[]));
+    }
+
+    #[test]
+    fn sound_tags_go_real_parentheses_stay() {
+        assert_eq!(strip_sound_tags("[Music] okay so (dog barking) let's ship it *coughs*"), "okay so let's ship it");
+        assert_eq!(strip_sound_tags("call Ana (the designer) today"), "call Ana (the designer) today");
+        assert_eq!(strip_sound_tags("[BLANK_AUDIO]"), "");
+    }
+
+    #[test]
+    fn repeat_loops_collapse() {
+        assert_eq!(collapse_repeats("and then and then and then and then we left"), "and then and then we left");
+        assert_eq!(collapse_repeats("thank you. thank you. thank you. thank you."), "thank you. thank you.");
+        assert_eq!(collapse_repeats("very very good"), "very very good");
     }
 }

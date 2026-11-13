@@ -144,11 +144,14 @@ pub struct PolishSettings {
     pub base_url: String,
     /// Below this many words, skip the LLM: nothing to clean, and it saves ~300 ms.
     pub min_words: usize,
+    /// Keep the speaker's exact words: cleanup may only punctuate and drop
+    /// "um"s, and its output is checked word by word. Off = styles and rewording.
+    pub exact: bool,
 }
 
 impl Default for PolishSettings {
     fn default() -> Self {
-        Self { enabled: true, provider: PolishProvider::Anthropic, model: String::new(), base_url: String::new(), min_words: 4 }
+        Self { enabled: true, provider: PolishProvider::Anthropic, model: String::new(), base_url: String::new(), min_words: 4, exact: true }
     }
 }
 

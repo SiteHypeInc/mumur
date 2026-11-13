@@ -74,7 +74,8 @@ ok=1
 [[ "$FIRST" == "Draft: Can you push it to GitHub before Friday? " ]] || { echo "x text not inserted as expected: [$FIRST]"; ok=0; }
 [[ "$FIELD" == "Draft: Can you push it to GitHub before Friday? Can you push it to GitHub before Friday? " ]] || { echo "x paste-last didn't re-insert the dictation"; ok=0; }
 [[ "$CLIP" == "original clipboard" ]] || { echo "x clipboard not restored"; ok=0; }
-grep -q '"system_has_work_chat": true' "$WORK/requests.log" || { echo "x app not classified as work chat"; ok=0; }
+grep -q 'Work in Some("Slack")' "$WORK/app.log" || { echo "x app not classified as work chat"; ok=0; }
+grep -q '"exact_words": true' "$WORK/requests.log" || { echo "x cleanup didn't use the exact-words prompt"; ok=0; }
 grep -q '"vocab": true' "$WORK/requests.log" || { echo "x vocabulary not sent to STT"; ok=0; }
 [[ "$(grep -c '"failed": true' "$WORK/requests.log")" == 2 ]] || { echo "x expected two failed transcription attempts before the retry worked"; ok=0; }
 [[ -z "$(ls -A "$HOME/.local/share/app.murmur.dictation/recordings" 2>/dev/null)" ]] || { echo "x transcribed recording was left on disk"; ok=0; }

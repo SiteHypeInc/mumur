@@ -82,9 +82,9 @@ pub struct Resolved {
 
 pub fn default_styles() -> HashMap<Category, Style> {
     HashMap::from([
-        (Category::Personal, Style::Casual),
-        (Category::Work, Style::Casual),
-        (Category::Email, Style::Formal),
+        (Category::Personal, Style::Natural),
+        (Category::Work, Style::Natural),
+        (Category::Email, Style::Natural),
         (Category::Code, Style::Natural),
         (Category::Document, Style::Natural),
         (Category::Other, Style::Natural),
@@ -144,7 +144,8 @@ mod tests {
         let ctx = AppContext { app_name: Some("Mail".into()), ..Default::default() };
         let r = resolve(&ctx, &[], &default_styles(), true);
         assert_eq!(r.category, Category::Email);
-        assert_eq!(r.style, Style::Formal);
+        // Out of the box nothing is restyled; tones are opt-in.
+        assert_eq!(r.style, Style::Natural);
         assert!(r.polish);
         assert_eq!(r.mode_name, None);
     }

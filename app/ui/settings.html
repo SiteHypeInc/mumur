@@ -149,7 +149,8 @@
     </div>
     <div class="card">
       <h3>Cleanup</h3>
-      <label class="check"><input type="checkbox" data-bind="polish.enabled" /> Clean up with AI (remove filler, fix punctuation, apply style)</label>
+      <label class="check"><input type="checkbox" data-bind="polish.enabled" /> Clean up with AI (punctuation, capitals, remove "um"s)</label>
+      <label class="check"><input type="checkbox" data-bind="polish.exact" /> Exact words only: never reword, summarize or add anything. Murmur checks every word and falls back to your transcript if the AI changed it</label>
       <label class="field">Provider
         <select data-bind="polish.provider">
           <option value="anthropic">Anthropic (Claude Haiku)</option>
@@ -176,6 +177,7 @@
   <section id="styles">
     <h1>Styles</h1>
     <p class="lead">Murmur detects what kind of app you're in and writes in the style you pick for it.</p>
+    <p class="hint warn" id="styles-off">Styles are off while "Exact words only" is on (Engines → Cleanup). Turn that off to let Murmur reword in these tones.</p>
     <div class="card" id="style-list"></div>
   </section>
 

@@ -28,7 +28,7 @@ class H(BaseHTTPRequestHandler):
                     return self.wfile.write(body)
                 return self._send({"text": "um so can you push it to git hub before friday"})
             req = json.loads(raw)
-            f.write(json.dumps({"path": self.path, "system_has_work_chat": "work chat" in req["messages"][0]["content"],
+            f.write(json.dumps({"path": self.path, "exact_words": req["messages"][0]["content"].startswith("You add punctuation"),
                                 "system_has_vocab": "GitHub" in req["messages"][0]["content"],
                                 "user": req["messages"][1]["content"]}) + "\n")
             self._send({"choices": [{"message": {"role": "assistant", "content": "Can you push it to github before Friday?"}}]})

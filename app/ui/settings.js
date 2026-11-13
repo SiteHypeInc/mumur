@@ -386,6 +386,7 @@ const POLISH_KEYS = {
   custom: ["custom", "Bearer token, if any", ""],
 };
 function syncCleanup() {
+  $("#styles-off").style.display = s.polish.exact ? "" : "none";
   const k = POLISH_KEYS[s.polish.provider];
   $("#polish-url").style.display = ["ollama", "custom"].includes(s.polish.provider) ? "" : "none";
   $$(".when-polish-key").forEach((x) => (x.style.display = k ? "" : "none"));

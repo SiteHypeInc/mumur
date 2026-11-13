@@ -98,6 +98,13 @@ impl Engine {
             out.note = Some("No speech detected".into());
             return Ok(out);
         }
+        // Noise captions ("[Music]", "(dog barking)") and stuck repeat loops are
+        // recognizer artifacts, not speech.
+        let raw = crate::text::collapse_repeats(&crate::text::strip_sound_tags(&raw));
+        if raw.is_empty() {
+            out.note = Some("No speech detected".into());
+            return Ok(out);
+        }
         out.raw = raw.clone();
         let fixed = settings.dictionary.apply(&raw, dictionary::DEFAULT_THRESHOLD);
 
@@ -111,12 +118,17 @@ impl Engine {
                 mode_instructions: out.resolved.instructions.as_deref(),
                 vocabulary: terms,
                 surrounding_text: job.surrounding_text.as_deref(),
+                exact: settings.polish.exact,
             });
             let t1 = Instant::now();
             let result = tokio::time::timeout(polish_deadline(words), p.complete(&system, &prompt::user_message(&fixed))).await;
             out.polish_ms = t1.elapsed().as_millis() as u64;
             match result {
                 Ok(Ok(cleaned)) => match llm::sanitize(&fixed, &cleaned) {
+                    Some(clean) if settings.polish.exact && !crate::text::faithful(&fixed, &clean, terms) => {
+                        // It reworded. The speaker's own words win; basic tidy-up runs below.
+                        log::warn!("cleanup changed the wording; using the exact transcript instead");
+                    }
                     Some(clean) => {
                         // The LLM can reintroduce a misspelling; snap again.
                         text = settings.dictionary.apply(&clean, dictionary::DEFAULT_THRESHOLD);
@@ -275,6 +287,7 @@ mod tests {
     async fn happy_path_uses_cleanup_with_app_context() {
         let llm = Arc::new(FakeLlm { behavior: Behavior::Echo("Can you push it to github?"), seen_system: Mutex::new(String::new()) });
         let mut s = Settings::default();
+        s.polish.exact = false;
         s.dictionary.terms.push("GitHub".into());
         let out = engine("um can you push it to git hub", Some(llm.clone())).run(job(slack()), &s).await.unwrap();
         assert_eq!(out.text, "Can you push it to GitHub?");
@@ -411,5 +424,30 @@ mod tests {
         assert_eq!(polish_deadline(20), Duration::from_secs(6));
         assert_eq!(polish_deadline(800), Duration::from_secs(26));
         assert_eq!(polish_deadline(10_000), Duration::from_secs(45));
+    }
+
+    #[tokio::test]
+    async fn exact_words_keeps_punctuation_cleanup_and_rejects_rewrites() {
+        let s = Settings::default();
+        assert!(s.polish.exact, "exact words is the default");
+        let ok = Arc::new(FakeLlm { behavior: Behavior::Echo("So, can you push it to GitHub before Friday?"), seen_system: Mutex::new(String::new()) });
+        let out = engine("um so can you push it to git hub before friday", Some(ok.clone())).run(job(slack()), &s).await.unwrap();
+        assert_eq!(out.text, "So, can you push it to GitHub before Friday?");
+        assert!(out.polished);
+        assert!(ok.seen_system.lock().unwrap().starts_with("You add punctuation"));
+
+        let rewriter = Arc::new(FakeLlm {
+            behavior: Behavior::Echo("Could you please push this to GitHub by Friday? Thanks so much!"),
+            seen_system: Mutex::new(String::new()),
+        });
+        let out = engine("um so can you push it to git hub before friday", Some(rewriter)).run(job(slack()), &s).await.unwrap();
+        assert!(!out.polished);
+        assert_eq!(out.text, "So can you push it to git hub before friday");
+    }
+
+    #[tokio::test]
+    async fn noise_captions_and_loops_never_reach_the_page() {
+        let out = engine("[Music] okay (dog barking) ship it ship it ship it ship it", None).run(job(slack()), &Settings::default()).await.unwrap();
+        assert_eq!(out.raw, "okay ship it ship it");
     }
 }
