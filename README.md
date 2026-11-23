@@ -58,7 +58,7 @@ Grab the latest build from **[Releases](../../releases)**: the `.dmg` for macOS 
 
 **macOS first launch:**
 
-1. Drag **Murmur** to Applications and open it. Builds aren't notarized yet, so the first time, **right-click → Open**. If macOS still refuses, run:
+1. Drag **Murmur** to Applications and open it. Builds aren't notarized yet, so macOS blocks the first launch. On **macOS 15 or later**: click **Done** on the warning, open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** next to Murmur, and confirm with your password. (On macOS 14 or earlier, **right-click → Open** works.) If macOS still refuses, run:
    `xattr -dr com.apple.quarantine /Applications/Murmur.app`
 2. Murmur lives in the **menu bar** (the little waveform) and the Dock. Don't want the Dock icon? Turn off **Show Murmur in the Dock** in Settings. To keep it on your Desktop too, ⌥⌘-drag it from Applications to make an alias.
 3. On **Get started**, turn Murmur on under **Input Monitoring** and **Accessibility**. The Keyboard check turns green within a couple of seconds; press your key to confirm.
